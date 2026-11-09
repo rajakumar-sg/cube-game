@@ -80,7 +80,7 @@
   }
 
   // ---- State ----
-  let state = 'ready';           // ready | playing | dead
+  let state = 'ready';           // ready | playing | paused | dead
   let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
   best = Number(localStorageGet('cubeJumpBest') || 0);
 
@@ -135,11 +135,18 @@
 
   // ---- Input ----
   function press() {
+    if (state === 'paused') { state = 'playing'; holdJump = false; return; } // resume without jumping
     if (state === 'ready') { state = 'playing'; }
     else if (state === 'dead') { reset(); state = 'playing'; }
     holdJump = true;
   }
   function release() { holdJump = false; }
+
+  // P pauses and resumes; only works mid-run
+  function togglePause() {
+    if (state === 'playing') { state = 'paused'; holdJump = false; }
+    else if (state === 'paused') { state = 'playing'; }
+  }
 
   let showHitboxes = false;
   function toggleHitboxes() {
@@ -151,6 +158,7 @@
 
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyH' && !e.repeat) { toggleHitboxes(); return; }
+    if (e.code === 'KeyP' && !e.repeat) { togglePause(); return; }
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(); else holdJump = true; }
   });
   window.addEventListener('keyup', e => {
@@ -166,8 +174,10 @@
   document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
   document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
   document.addEventListener('contextmenu', e => e.preventDefault());
-  // If the app is backgrounded mid-hold, don't come back still jumping
-  document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
+  // If you switch tabs/apps mid-run, pause so you don't come back to a crash
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { release(); if (state === 'playing') state = 'paused'; }
+  });
 
   // ---- Physics helpers ----
   // Spike hitbox: a small rectangle in the middle of the 40x40 spike
@@ -197,6 +207,7 @@
 
   // ---- Update ----
   function update(dt) {
+    if (state === 'paused') return; // freeze everything, including particles
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * 0.5 * dt; p.life -= dt * 1.2; }
     particles = particles.filter(p => p.life > 0);
     if (shake > 0) shake = Math.max(0, shake - 60 * dt);
@@ -381,6 +392,15 @@
       ctx.font = '18px -apple-system, system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
       ctx.fillText(isTouch ? 'Tap to try again' : 'Press SPACE or click to try again', W / 2, cy + 75);
+    } else if (state === 'paused') {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 52px -apple-system, system-ui, sans-serif';
+      ctx.fillText('PAUSED', W / 2, cy);
+      ctx.font = '20px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(isTouch ? 'Tap to resume' : 'Press P, SPACE or click to resume', W / 2, cy + 42);
     }
   }
 
