@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cube Jump</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0f1226; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; font-family: -apple-system, system-ui, sans-serif; }
+  canvas { display: block; max-width: 100vw; max-height: 100vh; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+<canvas id="game" width="960" height="540"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // ---- Tunables ----
+  const GROUND_Y = 420;          // top of the floor
+  const CUBE = 40;               // cube size (outer hitbox: lands on / stands on blocks)
+  const INNER = 12;              // inner hitbox inset per side -> 16x16 box; touching a spike or block with it = crash
+  const GRAVITY = 2600;          // px/s^2
+  const JUMP_V = -740;           // px/s (jump height ≈ JUMP_V² / (2·GRAVITY) ≈ 105px)
+  const START_SPEED = 360;       // px/s
+  const MAX_SPEED = 720;
+  const SPEED_GAIN = 8;          // px/s gained per second
+
+  // ---- State ----
+  let state = 'ready';           // ready | playing | dead
+  let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
+  best = Number(localStorageGet('cubeJumpBest') || 0);
+
+  function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+  function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+  function reset() {
+    player = { x: 180, y: GROUND_Y - CUBE, vy: 0, rot: 0, onGround: true };
+    obstacles = [];
+    particles = [];
+    speed = START_SPEED;
+    distance = 0;
+    spawnIn = 500;
+    shake = 0;
+    groundOffset = 0;
+  }
+  reset();
+
+  // ---- Obstacle patterns (x offsets relative to spawn point) ----
+  // s = spike, b = block (w,h), all sit on the ground or on blocks
+  const patterns = [
+    [{ t: 's', x: 0 }],
+    [{ t: 's', x: 0 }, { t: 's', x: 40 }],
+    [{ t: 's', x: 0 }, { t: 's', x: 40 }, { t: 's', x: 80 }],
+    [{ t: 'b', x: 0, w: 40, h: 40 }],
+    [{ t: 'b', x: 0, w: 80, h: 40 }, { t: 's', x: 120 }],
+    [{ t: 'b', x: 0, w: 40, h: 40 }, { t: 'b', x: 40, w: 40, h: 80 }, { t: 'b', x: 80, w: 120, h: 80 }],
+    [{ t: 'b', x: 0, w: 160, h: 40 }, { t: 's', x: 60, y: 40 }],
+    [{ t: 's', x: 0 }, { t: 'b', x: 140, w: 40, h: 40 }],
+  ];
+
+  function spawn() {
+    const level = Math.min(patterns.length, 3 + Math.floor(distance / 1500));
+    const p = patterns[Math.floor(Math.random() * level)];
+    const baseX = W + 40;
+    let width = 0;
+    for (const o of p) {
+      if (o.t === 's') {
+        obstacles.push({ t: 's', x: baseX + o.x, w: 40, h: 40, y: GROUND_Y - 40 - (o.y || 0) });
+        width = Math.max(width, o.x + 40);
+      } else {
+        obstacles.push({ t: 'b', x: baseX + o.x, w: o.w, h: o.h, y: GROUND_Y - o.h });
+        width = Math.max(width, o.x + o.w);
+      }
+    }
+    // gap before next pattern, shrinks slightly as speed rises
+    spawnIn = width + 260 + Math.random() * 260 + speed * 0.35;
+  }
+
+  // ---- Input ----
+  function press() {
+    if (state === 'ready') { state = 'playing'; }
+    else if (state === 'dead') { reset(); state = 'playing'; }
+    holdJump = true;
+  }
+  function release() { holdJump = false; }
+  let showHitboxes = false;
+  window.addEventListener('keydown', e => {
+    if (e.code === 'KeyH' && !e.repeat) { showHitboxes = !showHitboxes; return; }
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(); else holdJump = true; }
+  });
+  window.addEventListener('keyup', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') release();
+  });
+  canvas.addEventListener('mousedown', press);
+  window.addEventListener('mouseup', release);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); press(); }, { passive: false });
+  window.addEventListener('touchend', release);
+
+  // ---- Physics helpers ----
+  const SPIKE_INSET = 6;
+  function spikeTri(s) {
+    return [[s.x + SPIKE_INSET, s.y + s.h], [s.x + s.w / 2, s.y + SPIKE_INSET], [s.x + s.w - SPIKE_INSET, s.y + s.h]];
+  }
+  function outerBox() { return { x: player.x, y: player.y, w: CUBE, h: CUBE }; }
+  function innerBox() { return { x: player.x + INNER, y: player.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER }; }
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  // Exact rectangle-vs-triangle test (separating axis theorem)
+  function rectHitsTri(r, tri) {
+    const rect = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
+    const axes = [[1, 0], [0, 1]];
+    for (let i = 0; i < 3; i++) {
+      const [x1, y1] = tri[i], [x2, y2] = tri[(i + 1) % 3];
+      axes.push([y1 - y2, x2 - x1]);
+    }
+    for (const [ax, ay] of axes) {
+      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+      for (const [x, y] of rect) { const d = x * ax + y * ay; aMin = Math.min(aMin, d); aMax = Math.max(aMax, d); }
+      for (const [x, y] of tri) { const d = x * ax + y * ay; bMin = Math.min(bMin, d); bMax = Math.max(bMax, d); }
+      if (aMax <= bMin || bMax <= aMin) return false;
+    }
+    return true;
+  }
+
+  function die() {
+    state = 'dead';
+    shake = 14;
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2, v = 150 + Math.random() * 350;
+      particles.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 200, life: 1, size: 4 + Math.random() * 6 });
+    }
+    const score = Math.floor(distance / 10);
+    if (score > best) { best = score; localStorageSet('cubeJumpBest', best); }
+  }
+
+  // ---- Update ----
+  function update(dt) {
+    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * 0.5 * dt; p.life -= dt * 1.2; }
+    particles = particles.filter(p => p.life > 0);
+    if (shake > 0) shake = Math.max(0, shake - 60 * dt);
+
+    if (state !== 'playing') return;
+
+    speed = Math.min(MAX_SPEED, speed + SPEED_GAIN * dt);
+    const dx = speed * dt;
+    distance += dx;
+    groundOffset = (groundOffset + dx) % 40;
+
+    // move obstacles
+    for (const o of obstacles) o.x -= dx;
+    obstacles = obstacles.filter(o => o.x + o.w > -50);
+    spawnIn -= dx;
+    if (spawnIn <= 0) spawn();
+
+    // jump (hold to keep bouncing)
+    if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; }
+
+    // vertical movement
+    const prevY = player.y;
+    player.vy += GRAVITY * dt;
+    player.y += player.vy * dt;
+    player.onGround = false;
+
+    // floor
+    if (player.y + CUBE >= GROUND_Y) { player.y = GROUND_Y - CUBE; player.vy = 0; player.onGround = true; }
+
+    // blocks: the OUTER box lands on top; the INNER box touching a block = crash.
+    // If the outer box sinks into a block's top by no more than INNER px while falling,
+    // it snaps up and lands (the inner box hasn't touched the block yet).
+    for (const o of obstacles) {
+      if (o.t !== 'b' || !rectsOverlap(outerBox(), o)) continue;
+      if (player.vy >= 0 && player.y + CUBE - o.y <= INNER) {
+        player.y = o.y - CUBE; player.vy = 0; player.onGround = true;
+      } else if (rectsOverlap(innerBox(), o)) {
+        return die();
+      }
+    }
+
+    // spikes: only the INNER box can be hit
+    const inner = innerBox();
+    for (const o of obstacles) {
+      if (o.t === 's' && rectHitsTri(inner, spikeTri(o))) return die();
+    }
+
+    // rotation: spin in air, snap to nearest 90° on ground
+    if (player.onGround) {
+      const target = Math.round(player.rot / (Math.PI / 2)) * (Math.PI / 2);
+      player.rot += (target - player.rot) * Math.min(1, dt * 20);
+    } else {
+      player.rot += dt * 7.2;
+      // trail
+      if (Math.random() < 0.6) particles.push({ x: player.x + 4, y: player.y + CUBE - 6, vx: -speed * 0.3, vy: 0, life: 0.5, size: 5 });
+    }
+  }
+
+  // ---- Draw ----
+  function hue() { return (200 + distance / 40) % 360; }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+
+    // background gradient shifts color as you go
+    const h = hue();
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, `hsl(${h}, 60%, 22%)`);
+    g.addColorStop(1, `hsl(${(h + 40) % 360}, 60%, 10%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    // parallax squares in background
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    for (let i = 0; i < 12; i++) {
+      const x = ((i * 137 - distance * 0.2) % (W + 200) + W + 200) % (W + 200) - 100;
+      const y = 60 + (i * 53) % 260;
+      const s = 30 + (i * 17) % 50;
+      ctx.fillRect(x, y, s, s);
+    }
+
+    // ground
+    ctx.fillStyle = `hsl(${h}, 50%, 14%)`;
+    ctx.fillRect(-20, GROUND_Y, W + 40, H - GROUND_Y + 20);
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 2;
+    for (let x = -groundOffset; x < W; x += 40) {
+      ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, H); ctx.stroke();
+    }
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-20, GROUND_Y, W + 40, 3);
+
+    // obstacles
+    for (const o of obstacles) {
+      if (o.t === 'b') {
+        ctx.fillStyle = '#1b1f3b';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = `hsl(${(h + 180) % 360}, 90%, 65%)`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(o.x + 1.5, o.y + 1.5, o.w - 3, o.h - 3);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        for (let yy = o.y + 20; yy < o.y + o.h; yy += 20) { ctx.beginPath(); ctx.moveTo(o.x + 3, yy); ctx.lineTo(o.x + o.w - 3, yy); ctx.stroke(); }
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y + o.h);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.lineTo(o.x + o.w, o.y + o.h);
+        ctx.closePath();
+        ctx.fillStyle = '#111';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+    }
+
+    // particles
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = '#ffd23f';
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // player
+    if (state !== 'dead') {
+      ctx.save();
+      ctx.translate(player.x + CUBE / 2, player.y + CUBE / 2);
+      ctx.rotate(player.rot);
+      ctx.fillStyle = '#ffd23f';
+      ctx.fillRect(-CUBE / 2, -CUBE / 2, CUBE, CUBE);
+      ctx.strokeStyle = '#3a2a00';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-CUBE / 2 + 1.5, -CUBE / 2 + 1.5, CUBE - 3, CUBE - 3);
+      ctx.fillStyle = '#ff8c1a';
+      ctx.fillRect(-CUBE / 2 + 9, -CUBE / 2 + 9, CUBE - 18, CUBE - 18);
+      // eyes
+      ctx.fillStyle = '#3a2a00';
+      ctx.fillRect(-9, -7, 6, 6);
+      ctx.fillRect(4, -7, 6, 6);
+      ctx.restore();
+    }
+
+    if (showHitboxes) drawHitboxes();
+
+    ctx.restore();
+
+    // HUD
+    const score = Math.floor(distance / 10);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(score, 24, 44);
+    ctx.font = '16px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('BEST ' + best, 24, 68);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = showHitboxes ? '#4dff88' : 'rgba(255,255,255,0.4)';
+    ctx.fillText(showHitboxes ? 'HITBOXES ON (H)' : 'H: hitboxes', W - 24, 36);
+
+    ctx.textAlign = 'center';
+    if (state === 'ready') {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 56px -apple-system, system-ui, sans-serif';
+      ctx.fillText('CUBE JUMP', W / 2, 180);
+      ctx.font = '22px -apple-system, system-ui, sans-serif';
+      ctx.fillText('Press SPACE, ↑ or click to jump', W / 2, 230);
+      ctx.font = '16px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('Hold to keep jumping · land on blocks · avoid spikes', W / 2, 262);
+    } else if (state === 'dead') {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 52px -apple-system, system-ui, sans-serif';
+      ctx.fillText('CRASH!', W / 2, 200);
+      ctx.font = '24px -apple-system, system-ui, sans-serif';
+      ctx.fillText(`Score ${score}   ·   Best ${best}`, W / 2, 245);
+      ctx.font = '18px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.fillText('Press SPACE or click to try again', W / 2, 285);
+    }
+  }
+
+  // ---- Debug: hitbox overlay (mirrors the collision code in update/spikeHit) ----
+  function drawHitboxes() {
+    ctx.lineWidth = 2;
+    for (const o of obstacles) {
+      if (o.t === 'b') {
+        // full block rectangle (solid for the outer box, deadly for the inner box)
+        ctx.strokeStyle = '#ff4d4d';
+        ctx.fillStyle = 'rgba(255,77,77,0.15)';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
+        // landing zone: outer box bottom anywhere in here while falling = snap up and land
+        ctx.fillStyle = 'rgba(77,255,136,0.45)';
+        ctx.fillRect(o.x, o.y, o.w, INNER);
+      } else {
+        const [[x1, y1], [x2, y2], [x3, y3]] = spikeTri(o);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,77,77,0.35)';
+        ctx.fill();
+        ctx.strokeStyle = '#ff4d4d';
+        ctx.stroke();
+      }
+    }
+    // cube: outer box (blue outline) and inner box (filled)
+    const ob = outerBox(), ib = innerBox();
+    ctx.strokeStyle = '#4dc3ff';
+    ctx.strokeRect(ob.x, ob.y, ob.w, ob.h);
+    ctx.fillStyle = 'rgba(255,61,240,0.6)';
+    ctx.fillRect(ib.x, ib.y, ib.w, ib.h);
+    ctx.strokeStyle = '#ff3df0';
+    ctx.strokeRect(ib.x, ib.y, ib.w, ib.h);
+  }
+
+  // ---- Loop ----
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
