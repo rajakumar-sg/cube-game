@@ -88,11 +88,15 @@
   .screen .level:active { transform: translateY(2px); }
   .level .face { grid-row: 1 / span 2; width: 42px; height: 42px; display: block; }
   .level .lv-name { font-size: 17px; font-weight: 700; }
-  .level .lv-meta { display: flex; gap: 8px; align-items: center; font-size: 13px; opacity: 0.9; }
-  .level .tag { padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; color: #111; }
+  .level .lv-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 13px; opacity: 0.9; }
+  .level .tag { padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; color: #111; white-space: nowrap; }
   .tag.easy { background: #4dff88; } .tag.normal { background: #ffd23f; }
   .tag.hard { background: #ff9a3c; } .tag.endless { background: #4dc3ff; }
-  .tag.harder { background: #ff5c5c; } .tag.insane { background: #ff3df0; } .tag.demon { background: #b07cff; }
+  .tag.harder { background: #ff5c5c; } .tag.insane { background: #ff3df0; }
+  .tag.easy-demon { background: #c9a3ff; } .tag.medium-demon { background: #a46bff; }
+  .tag.hard-demon { background: #ff4d4d; color: #fff; } .tag.insane-demon { background: #ff2a8a; color: #fff; }
+  .tag.extreme-demon { background: #2a0008; color: #ff5c5c; box-shadow: 0 0 0 1px #ff3b3b, 0 0 8px #ff3b3b; }
+  .level.extreme { border-color: rgba(255,59,59,0.6); box-shadow: 0 0 14px rgba(255,59,59,0.35) inset; }
   .level.done { border-color: #4dff88; }
 
   /* narrow screens (portrait phones): smaller level cards */
@@ -109,8 +113,12 @@
     .screen h1 { font-size: 36px; }
     .screen .hint { display: none; }
     .screen .level { padding: 8px 12px; gap: 4px; }
-    .level .lv-name { font-size: 15px; }
-    .level .face { width: 32px; height: 32px; }
+    .screen h1 { font-size: 30px; }
+    .screen .toggle { padding: 4px 14px; font-size: 13px; }
+    .screen .level { padding: 5px 10px; row-gap: 2px; }
+    .level .lv-name { font-size: 14px; }
+    .level .lv-meta { font-size: 11px; }
+    .level .face { width: 28px; height: 28px; }
     #levelList { gap: 6px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 </style>
@@ -176,7 +184,7 @@
 
   $('menuHint').textContent = isTouch
     ? 'Pick a level · tap to jump · hold to keep jumping · practice mode lets you place checkpoints'
-    : `Pick a level (or press 1–7) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes · in practice: C checkpoint, X undo`;
+    : `Pick a level (keys 1–9 and 0, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes · in practice: C checkpoint, X undo`;
   $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
@@ -275,8 +283,24 @@
       map: '..........^.^^.^^^......A.A.A......1^^^^2......^^.1^^.2^^.3......22..22..22......^^^^......1.2.3.2.1......A^A^A......12^^^^^21......^..^..^..^......123.B....123.B........',
     },
     {
-      id: 'final-gauntlet', name: 'Final Gauntlet', difficulty: 'Demon', speed: 540, hue: 30,
+      id: 'final-gauntlet', name: 'Final Gauntlet', difficulty: 'Easy Demon', speed: 540, hue: 30,
       map: '..........^^.....1^^^^.....2^^^^^.....1.2.3^^^3.2.1......A.A.A.A......1.2.3..3.2.1......^.^^.^^^...^^^^......123.B.12B.12B......22^^^^^^22......123^^^^^^3......^^.^^.^^.^^......A1A1A1A........',
+    },
+    {
+      id: 'inferno-steps', name: 'Inferno Steps', difficulty: 'Medium Demon', speed: 560, hue: 15,
+      map: '..........^^^.....1^^^^.....22^^^^22......A.A.A.A......1.2.3^^^3.2.1......^^.^^.^^.^^......123.B.12B......1^^^^2......^^^^......A1A1A1A......22^^^^^^22........',
+    },
+    {
+      id: 'abyss', name: 'Abyss', difficulty: 'Hard Demon', speed: 580, hue: 260,
+      map: '..........^^^^......1^^^^^......1.2.3^^^^3.2.1......A.A.A.A.A......^^..^^^..^^^^......123.B.12B.12B......22^^^^^^22......1A1A1A1A......^^^^.^^^^......1.2.3^^^^^3........',
+    },
+    {
+      id: 'void-runner', name: 'Void Runner', difficulty: 'Insane Demon', speed: 600, hue: 330,
+      map: '..........^^^^.^^^^......1^^^^^2^^^^^3......A.A.A.A........1.2.33^^^^33^^^^33.2.1......^^^...^^^...^^^......123.B.B.B......122^^^^^^22......1A1A1A1A1A......^^^^^..^^^^^........',
+    },
+    {
+      id: 'apocalypse', name: 'Apocalypse', difficulty: 'Extreme Demon', speed: 620, hue: 0,
+      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^......A.....A.....A.....A........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^......123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A......^^^^^......1.2.33^^^^^33.2.1........',
     },
   ];
   // LEVELS-END
@@ -325,6 +349,30 @@
       lead: 'C5 . Eb5 . G5 . C6 . Bb5 . G5 . Eb5 . G5 . | Ab5 . C6 . Eb6 . C6 . Ab5 . Eb5 . C5 . Eb5 . | Bb4 . D5 . F5 . Bb5 . D6 . Bb5 . F5 . D5 . | G5 . B5 . D6 . G6 - - . F6 . D6 . B5 .',
       bass: 'R . R . O . R . R . R . O . F .',
       kick: 'k.k.k.k.k.k.k.k.', snare: '....s.......s...', hat: 'h.hhh.hhh.hhh.hh',
+    },
+    'inferno-steps': {                  // hot, driving minor
+      bpm: 165, chords: ['Dm', 'Bb', 'C', 'A'], arp: true,
+      lead: 'D5 . F5 . A5 . D6 . C6 . A5 . F5 . A5 . | Bb4 . D5 . F5 . Bb5 . A5 . F5 . D5 . F5 . | C5 . E5 . G5 . C6 . Bb5 . G5 . E5 . G5 . | A4 . C#5 . E5 . A5 - - . G5 . E5 . C#5 .',
+      bass: 'R . R O R . R O R . R O F . R O',
+      kick: 'k...k...k...k...', snare: '....s.......s..s', hat: 'h.hhh.hhh.hhh.hh',
+    },
+    'abyss': {                          // deep and menacing
+      bpm: 172, chords: ['Gm', 'Eb', 'F', 'D'], arp: true,
+      lead: 'G4 . . Bb4 . D5 . G5 . . F5 . D5 . Bb4 . | Eb5 . . G5 . Bb5 . Eb6 . . D6 . Bb5 . G5 . | F5 . . A5 . C6 . F6 . . Eb6 . C6 . A5 . | D5 . F#5 . A5 . D6 - - . C6 . A5 . F#5 .',
+      bass: 'R . . R . . O . R . . R . F . O',
+      kick: 'k..k..k.k..k..k.', snare: '....s.......s...', hat: 'hhhhhhhhhhhhhhhh',
+    },
+    'void-runner': {                    // fast and glitchy
+      bpm: 180, chords: ['Am', 'F', 'G', 'E'], arp: true,
+      lead: 'A5 . E5 . A5 . C6 . B5 . A5 . E5 . A5 . | F5 . C5 . F5 . A5 . G5 . F5 . C5 . F5 . | G5 . D5 . G5 . B5 . A5 . G5 . D5 . G5 . | E5 . G#5 . B5 . E6 - - . D6 . B5 . G#5 .',
+      bass: 'R R O R R R O R R R O R F R O R',
+      kick: 'k...k...k...k.k.', snare: '....s.......s...', hat: 'h.hhh.hhh.hhh.hh',
+    },
+    'apocalypse': {                     // the end of the world: fastest and fiercest
+      bpm: 190, chords: ['Em', 'C', 'Am', 'B'], arp: true,
+      lead: 'E5 E5 . E5 G5 . E5 . B5 . A5 . G5 . F#5 . | E5 E5 . E5 G5 . E5 . C6 . B5 . G5 . E5 . | A5 A5 . A5 C6 . A5 . E6 . D6 . C6 . A5 . | B5 . A5 . G5 . F#5 . D#5 - - . F#5 . B5 .',
+      bass: 'R R O R R R O R R R O R F F O O',
+      kick: 'k.k.k.k.k.k.k.k.', snare: '....s.......s.ss', hat: 'hhhhhhhhhhhhhhhh',
     },
     'endless': {                        // groovy
       bpm: 136, chords: ['Dm', 'G', 'Dm', 'C'], arp: true,
@@ -637,11 +685,12 @@
     if (e.code === 'KeyX' && !e.repeat) { removeCheckpoint(); return; }
     if (e.code === 'KeyP' && !e.repeat) { if (state === 'playing') togglePause(); return; } // P pauses; only buttons resume
     if ((e.code === 'Escape' || e.code === 'KeyM') && (state === 'paused' || state === 'dead' || state === 'complete')) { goMenu(); return; }
-    if (state === 'menu' && /^Digit[1-9]$/.test(e.code)) {
-      const n = Number(e.code.slice(5)) - 1;
-      if (n < LEVELS.length) startGame(LEVELS[n]); else if (n === LEVELS.length && !practice) startGame(null);
+    if (state === 'menu' && /^Digit[0-9]$/.test(e.code)) { // 1–9 then 0 = level 10
+      const d = Number(e.code.slice(5)), n = d === 0 ? 9 : d - 1;
+      if (n < LEVELS.length) startGame(LEVELS[n]);
       return;
     }
+    if (state === 'menu' && e.code === 'KeyE' && !practice) { startGame(null); return; }
     if (e.code === 'Enter' && !e.repeat) {
       if (state === 'menu') { startGame(lastMode); return; }
       if (state === 'complete') { nextLevel(); return; }
@@ -676,7 +725,26 @@
   onTap($('practiceToggle'), () => { practice = !practice; buildLevelList(); });
 
   // Difficulty faces (original drawings): they get angrier as the levels get harder
-  const FACE_COLORS = { Easy: '#4dff88', Normal: '#ffd23f', Hard: '#ff9a3c', Harder: '#ff5c5c', Insane: '#ff3df0', Demon: '#8b3dff', Endless: '#4dc3ff' };
+  const FACE_COLORS = { Easy: '#4dff88', Normal: '#ffd23f', Hard: '#ff9a3c', Harder: '#ff5c5c', Insane: '#ff3df0', Endless: '#4dc3ff',
+    'Easy Demon': '#c9a3ff', 'Medium Demon': '#a46bff', 'Hard Demon': '#e03434', 'Insane Demon': '#ff2a8a', 'Extreme Demon': '#3a0610' };
+  const DEMON_RANK = { 'Easy Demon': 1, 'Medium Demon': 2, 'Hard Demon': 3, 'Insane Demon': 4, 'Extreme Demon': 5 };
+  // demon faces get bigger horns, meaner eyes and wilder mouths as the rank goes up (1–5)
+  function demonFace(rank, c) {
+    const ink = '#1a1020', eye = rank >= 3 ? '#ff2a2a' : ink, hornH = 4 + rank * 2.2;
+    const horns = `<path d="M9 12 L${6 - rank * 0.6} ${12 - hornH} L15 8 Z M31 12 L${34 + rank * 0.6} ${12 - hornH} L25 8 Z" fill="${rank === 5 ? '#ff3b3b' : c}" stroke="${ink}" stroke-width="1.5" stroke-linejoin="round"/>`;
+    const brows = rank === 1 ? `<path d="M11 14 L17 15.5 M29 14 L23 15.5" stroke="${ink}" stroke-width="2.4" stroke-linecap="round"/>`
+      : `<path d="M${10 - rank * 0.3} ${12 + rank * 0.3} L18 ${16.5 + rank * 0.2} M${30 + rank * 0.3} ${12 + rank * 0.3} L22 ${16.5 + rank * 0.2}" stroke="${rank === 5 ? '#ff3b3b' : ink}" stroke-width="3" stroke-linecap="round"/>`;
+    const glow = rank >= 4 ? `<circle cx="14" cy="20" r="4.5" fill="#ff2a2a" opacity="0.35"/><circle cx="26" cy="20" r="4.5" fill="#ff2a2a" opacity="0.35"/>` : '';
+    const eyes = glow + `<circle cx="14" cy="20" r="2.4" fill="${eye}"/><circle cx="26" cy="20" r="2.4" fill="${eye}"/>`;
+    const mouth = [
+      `<path d="M13 26 Q20 30 27 25" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linecap="round"/>`,                                   // smirk
+      `<path d="M12 25 Q20 32 28 25 Z" fill="${ink}"/><path d="M14 26 L16 28 L18 26.5 L20 28.5 L22 26.5 L24 28 L26 26" stroke="#fff" stroke-width="1.2" fill="none"/>`, // toothy grin
+      `<path d="M11 25 L14 30 L17 26 L20 31 L23 26 L26 30 L29 25" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linejoin="round"/>`,      // jagged
+      `<path d="M11 24 Q20 36 29 24 Z" fill="${ink}"/><path d="M14 25 L15.5 29 L17 25.5 M23 25.5 L24.5 29 L26 25" stroke="#fff" stroke-width="1.4" fill="none"/>`,       // fangs
+      `<path d="M10 24 Q20 37 30 24 Z" fill="#ff3b3b"/><path d="M12 24.5 L14 28 L16 25 L18 29 L20 25.5 L22 29 L24 25 L26 28 L28 24.5" stroke="${ink}" stroke-width="1.6" fill="none"/>`, // fiery maw
+    ][rank - 1];
+    return horns + brows + eyes + mouth;
+  }
   function faceSVG(diff) {
     const c = FACE_COLORS[diff] || '#ccc', ink = '#1a1020';
     const eyes = r => `<circle cx="14" cy="18" r="${r}" fill="${ink}"/><circle cx="26" cy="18" r="${r}" fill="${ink}"/>`;
@@ -689,21 +757,18 @@
       Insane: `<path d="M8 10 L18 16 M32 10 L22 16" stroke="${ink}" stroke-width="3" stroke-linecap="round"/>` +
         `<path d="M11 18 L17 19 M23 19 L29 18" stroke="${ink}" stroke-width="3.2" stroke-linecap="round"/>` +
         `<rect x="12" y="23" width="16" height="8" rx="2" fill="${ink}"/><path d="M13 24 L15 27 L17 24 L19 27 L21 24 L23 27 L25 24 L27 27" stroke="#fff" stroke-width="1.3" fill="none"/>`,
-      Demon: `<path d="M8 12 L4 1 L14 7 Z M32 12 L36 1 L26 7 Z" fill="${c}" stroke="${ink}" stroke-width="1.5" stroke-linejoin="round"/>` +
-        `<path d="M9 14 L18 18 M31 14 L22 18" stroke="${ink}" stroke-width="3" stroke-linecap="round"/>` +
-        `<circle cx="14" cy="20" r="2.4" fill="#ff2a2a"/><circle cx="26" cy="20" r="2.4" fill="#ff2a2a"/>` +
-        `<path d="M11 25 L14 30 L17 26 L20 31 L23 26 L26 30 L29 25" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linejoin="round"/>`,
       Endless: `<path d="M12 20 C12 14 18 14 20 20 C22 26 28 26 28 20 C28 14 22 14 20 20 C18 26 12 26 12 20 Z" stroke="${ink}" stroke-width="2.8" fill="none"/>`,
     };
-    return `<svg class="face" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="21" r="16.5" fill="${c}" stroke="${ink}" stroke-width="2"/>` +
-      `<ellipse cx="15" cy="13" rx="6" ry="3" fill="#fff" opacity="0.35"/>${parts[diff] || ''}</svg>`;
+    const rank = DEMON_RANK[diff];
+    const aura = rank === 5 ? '<circle cx="20" cy="21" r="19" fill="none" stroke="#ff3b3b" stroke-width="2" opacity="0.7"/>' : '';
+    return `<svg class="face" viewBox="-2 -6 44 48" aria-hidden="true">${aura}<circle cx="20" cy="21" r="16.5" fill="${c}" stroke="${rank === 5 ? '#ff3b3b' : ink}" stroke-width="2"/>` +
+      `<ellipse cx="15" cy="13" rx="6" ry="3" fill="#fff" opacity="${rank === 5 ? 0.12 : 0.35}"/>${rank ? demonFace(rank, c) : parts[diff] || ''}</svg>`;
   }
 
   // Level select buttons (rebuilt each time the menu opens, so best scores are current)
   function buildLevelList() {
     const list = $('levelList');
     list.innerHTML = '';
-    $('menuHint').textContent = $('menuHint').textContent.replace(/1–\d+/, `1–${LEVELS.length + 1}`);
     $('practiceToggle').textContent = `Practice mode: ${practice ? 'On' : 'Off'}`;
     $('practiceToggle').classList.toggle('on', practice);
     const entries = [...LEVELS.map(lv => ({ lv, name: lv.name, tag: lv.difficulty, bestText: levelBest(lv) ? `Best ${levelBest(lv)}%` : 'New', done: levelBest(lv) >= 100 })),
@@ -712,9 +777,10 @@
       const b = document.createElement('button');
       b.type = 'button'; b.tabIndex = -1;
       const off = practice && !en.lv; // no practice for Endless
-      b.className = 'level' + (en.done ? ' done' : '') + (off ? ' disabled' : '');
-      b.innerHTML = faceSVG(en.tag) + `<span class="lv-name">${isTouch ? '' : (i + 1) + '. '}${en.name}${en.done ? ' ✓' : ''}</span>` +
-        `<span class="lv-meta"><span class="tag ${en.tag.toLowerCase()}">${en.tag}</span><span>${en.bestText}</span></span>`;
+      b.className = 'level' + (en.done ? ' done' : '') + (off ? ' disabled' : '') + (en.tag === 'Extreme Demon' ? ' extreme' : '');
+      const keyLabel = !en.lv ? 'E' : i === 9 ? '0' : String(i + 1);
+      b.innerHTML = faceSVG(en.tag) + `<span class="lv-name">${isTouch ? '' : keyLabel + '. '}${en.name}${en.done ? ' ✓' : ''}</span>` +
+        `<span class="lv-meta"><span class="tag ${en.tag.toLowerCase().replace(/ /g, '-')}">${en.tag}</span><span>${en.bestText}</span></span>`;
       onTap(b, () => { if (!off) startGame(en.lv); });
       list.appendChild(b);
     });

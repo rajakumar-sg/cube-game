@@ -3,6 +3,7 @@
 // with input only allowed to change on screen frames at 30, 60 and 120 fps.
 // usage:  node tools/check-levels.js            (checks ./index.html)
 //         node --stack-size=65500 tools/check-levels.js   if a long level overflows the stack
+//         node tools/check-levels.js index.html neon-rush   to check just one level (by id)
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[2] || require('path').join(__dirname, '..', 'index.html'), 'utf8');
 const LEVELS = new Function(src.slice(src.indexOf('// LEVELS-START'), src.indexOf('// LEVELS-END')) + '; return LEVELS;')();
@@ -76,7 +77,7 @@ function analyse(lv, K) {
   return { ok: true };
 }
 
-for (const lv of LEVELS) {
+for (const lv of LEVELS.filter(l => !process.argv[3] || process.argv.slice(3).includes(l.id))) {
   const row = [lv.name.padEnd(14)];
   for (const [fps, K] of [[30, 4], [60, 2], [120, 1]]) {
     const r = analyse(lv, K);
