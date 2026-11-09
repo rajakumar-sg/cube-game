@@ -59,6 +59,25 @@
   .screen [hidden] { display: none; }
 
   /* Level select */
+  .screen .toggle {
+    font-size: 15px; font-weight: 700; padding: 8px 18px;
+    background: rgba(0,0,0,0.4); color: rgba(255,255,255,0.8); border: 2px solid rgba(255,255,255,0.25);
+  }
+  .screen .toggle.on { color: #4dff88; border-color: #4dff88; background: rgba(77,255,136,0.12); }
+  .screen .level.disabled { opacity: 0.35; }
+  #practiceBar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+    display: flex; gap: 10px;
+  }
+  #practiceBar[hidden] { display: none; }
+  #practiceBar button {
+    font: 700 16px -apple-system, system-ui, sans-serif; cursor: pointer;
+    padding: 12px 20px; border-radius: 999px; color: #fff;
+    background: rgba(0,0,0,0.45); border: 2px solid rgba(255,255,255,0.3);
+  }
+  #practiceBar #cpAddBtn { color: #4dff88; border-color: #4dff88; }
+  #practiceBar button:active { transform: translateY(2px); }
   #levelList { display: grid; grid-template-columns: repeat(2, minmax(150px, 230px)); gap: 10px; }
   .screen .level {
     display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
@@ -89,6 +108,7 @@
 
 <div id="menuScreen" class="screen">
   <h1>CUBE JUMP</h1>
+  <button id="practiceToggle" class="toggle" type="button" tabindex="-1">Practice mode: Off</button>
   <div id="levelList"></div>
   <p id="menuHint" class="hint"></p>
 </div>
@@ -122,6 +142,11 @@
   <p id="crashHint" class="hint"></p>
 </div>
 
+<div id="practiceBar" hidden>
+  <button id="cpAddBtn" type="button" tabindex="-1">◆ Checkpoint</button>
+  <button id="cpRemoveBtn" type="button" tabindex="-1">✕ Undo</button>
+</div>
+
 <div id="controls">
   <button id="pauseBtn" type="button" tabindex="-1" hidden>❚❚</button>
   <button id="musicBtn" type="button" tabindex="-1">♪ Music</button>
@@ -138,8 +163,8 @@
   const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
   $('menuHint').textContent = isTouch
-    ? 'Pick a level · tap to jump · hold to keep jumping'
-    : 'Pick a level (or press 1–4) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes';
+    ? 'Pick a level · tap to jump · hold to keep jumping · practice mode lets you place checkpoints'
+    : 'Pick a level (or press 1–4) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes · in practice: C checkpoint, X undo';
   $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
@@ -197,6 +222,10 @@
   let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
   let mode = null;               // the level being played, or null for Endless
   let rings = [], clock = 0, menuT = 0, trailTick = 0;   // visual effects only
+  // Practice mode: crash and you respawn at your last checkpoint; nothing is saved
+  let practice = false;          // the menu toggle
+  let inPractice = false;        // is the current run a practice run?
+  let checkpoints = [], attempt = 1, respawnT = 0;
   let finishX = 0, levelLength = 1;
   best = Number(localStorageGet('cubeJumpBest') || 0);   // Endless best score
 
@@ -484,6 +513,8 @@
   let lastMode = LEVELS[0];      // what Space/Enter starts from the menu
   function startGame(m = mode) {
     mode = m; lastMode = m; reset(); state = 'playing'; holdJump = false;
+    inPractice = practice && !!mode; // practice works on the levels (Endless is random)
+    checkpoints = []; attempt = 1;
     music.play(mode ? mode.id : 'endless'); // each level's song starts from the top
   }
   function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; music.stop(); }
@@ -497,7 +528,7 @@
     holdJump = false;
     music.stop();
     music.win();
-    localStorageSet('cubeJumpLevel:' + mode.id, 100);
+    if (!inPractice) localStorageSet('cubeJumpLevel:' + mode.id, 100);
     rings.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, r: 8, v: 700, life: 1, color: '77,255,136' });
     // confetti
     const colors = ['#ffd23f', '#4dff88', '#4dc3ff', '#ff5c5c', '#ff3df0'];
@@ -505,6 +536,33 @@
       const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2, v = 300 + Math.random() * 500;
       particles.push({ x: player.x + CUBE / 2, y: player.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.6, size: 5 + Math.random() * 5, color: colors[i % colors.length] });
     }
+  }
+
+  // ---- Practice checkpoints ----
+  function placeCheckpoint() {
+    if (!inPractice || state !== 'playing') return;
+    checkpoints.push({ dist: distance, y: player.y, vy: player.vy, onGround: player.onGround, rot: player.rot });
+    rings.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, r: 6, v: 260, life: 0.8, color: '77,255,136' });
+  }
+  function removeCheckpoint() {
+    if (inPractice && (state === 'playing' || state === 'respawn')) checkpoints.pop();
+  }
+  // put the world and the cube back exactly as they were at the last checkpoint (or the start)
+  function respawn() {
+    attempt++;
+    const cp = checkpoints[checkpoints.length - 1];
+    reset();
+    if (cp) {
+      distance = cp.dist;
+      groundOffset = cp.dist % 40;
+      for (const o of obstacles) o.x -= cp.dist;
+      obstacles = obstacles.filter(o => o.x + o.w > -50);
+      finishX -= cp.dist;
+      Object.assign(player, { y: cp.y, vy: cp.vy, onGround: cp.onGround, rot: cp.rot });
+    }
+    state = 'playing';
+    holdJump = false;
+    shownState = ''; // refresh buttons
   }
 
   // Jump input. On the main menu only a level button (or Space/Enter/1–4) starts the game.
@@ -532,11 +590,13 @@
 
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyH' && !e.repeat) { toggleHitboxes(); return; }
+    if (e.code === 'KeyC' && !e.repeat) { placeCheckpoint(); return; }
+    if (e.code === 'KeyX' && !e.repeat) { removeCheckpoint(); return; }
     if (e.code === 'KeyP' && !e.repeat) { if (state === 'playing') togglePause(); return; } // P pauses; only buttons resume
     if ((e.code === 'Escape' || e.code === 'KeyM') && (state === 'paused' || state === 'dead' || state === 'complete')) { goMenu(); return; }
     if (state === 'menu' && /^Digit[1-9]$/.test(e.code)) {
       const n = Number(e.code.slice(5)) - 1;
-      if (n < LEVELS.length) startGame(LEVELS[n]); else if (n === LEVELS.length) startGame(null);
+      if (n < LEVELS.length) startGame(LEVELS[n]); else if (n === LEVELS.length && !practice) startGame(null);
       return;
     }
     if (e.code === 'Enter' && !e.repeat) {
@@ -567,20 +627,27 @@
   onTap($('nextBtn'), nextLevel);
   onTap($('replayBtn'), () => startGame());
   onTap($('completeMenuBtn'), goMenu);
+  onTap($('cpAddBtn'), placeCheckpoint);
+  onTap($('cpRemoveBtn'), removeCheckpoint);
+  if (!isTouch) { $('cpAddBtn').textContent = '◆ Checkpoint (C)'; $('cpRemoveBtn').textContent = '✕ Undo (X)'; }
+  onTap($('practiceToggle'), () => { practice = !practice; buildLevelList(); });
 
   // Level select buttons (rebuilt each time the menu opens, so best scores are current)
   function buildLevelList() {
     const list = $('levelList');
     list.innerHTML = '';
+    $('practiceToggle').textContent = `Practice mode: ${practice ? 'On' : 'Off'}`;
+    $('practiceToggle').classList.toggle('on', practice);
     const entries = [...LEVELS.map(lv => ({ lv, name: lv.name, tag: lv.difficulty, bestText: levelBest(lv) ? `Best ${levelBest(lv)}%` : 'Not played', done: levelBest(lv) >= 100 })),
       { lv: null, name: 'Endless', tag: 'Endless', bestText: best ? `Best ${best}` : 'Not played', done: false }];
     entries.forEach((en, i) => {
       const b = document.createElement('button');
       b.type = 'button'; b.tabIndex = -1;
-      b.className = 'level' + (en.done ? ' done' : '');
+      const off = practice && !en.lv; // no practice for Endless
+      b.className = 'level' + (en.done ? ' done' : '') + (off ? ' disabled' : '');
       b.innerHTML = `<span class="lv-name">${isTouch ? '' : (i + 1) + '. '}${en.name}${en.done ? ' ✓' : ''}</span>` +
         `<span class="lv-meta"><span class="tag ${en.tag.toLowerCase()}">${en.tag}</span><span>${en.bestText}</span></span>`;
-      onTap(b, () => startGame(en.lv));
+      onTap(b, () => { if (!off) startGame(en.lv); });
       list.appendChild(b);
     });
   }
@@ -597,9 +664,11 @@
       : `Score ${Math.floor(distance / 10)}   ·   Best ${best}`;
     if (state === 'complete') {
       const i = LEVELS.indexOf(mode);
-      $('completeName').textContent = i === LEVELS.length - 1 ? `${mode.name} — you beat every level!` : mode.name;
+      $('completeName').textContent = inPractice ? `${mode.name} (practice — ${attempt} attempt${attempt === 1 ? '' : 's'})`
+        : i === LEVELS.length - 1 ? `${mode.name} — you beat every level!` : mode.name;
       $('nextBtn').hidden = i === LEVELS.length - 1;
     }
+    $('practiceBar').hidden = !(inPractice && (state === 'playing' || state === 'respawn'));
     pauseBtn.hidden = state !== 'playing' && state !== 'paused';
     pauseBtn.textContent = state === 'paused' ? '▶' : '❚❚' + (isTouch ? '' : ' (P)');
     pauseBtn.setAttribute('aria-label', state === 'paused' ? 'Resume' : 'Pause');
@@ -634,9 +703,9 @@
   }
 
   function die() {
-    state = 'dead';
+    state = inPractice ? 'respawn' : 'dead';
     shake = 14;
-    music.stop();
+    if (inPractice) respawnT = 0.6; else music.stop(); // in practice the music keeps going
     music.crash();
     if (navigator.vibrate) navigator.vibrate(80);
     const cx = player.x + CUBE / 2, cy = player.y + CUBE / 2;
@@ -645,6 +714,7 @@
       const a = Math.random() * Math.PI * 2, v = 150 + Math.random() * 420;
       particles.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 200, life: 1, size: 4 + Math.random() * 7, glow: true, color: ['#ffd23f', '#ff9a1f', '#fff3b0'][i % 3] });
     }
+    if (inPractice) return; // practice runs don't count toward your best
     if (mode) {
       if (progress() > levelBest(mode)) localStorageSet('cubeJumpLevel:' + mode.id, progress());
     } else {
@@ -681,6 +751,7 @@
       return;
     }
 
+    if (state === 'respawn') { respawnT -= dt; if (respawnT <= 0) respawn(); return; }
     if (state !== 'playing') return;
 
     if (!mode) speed = Math.min(MAX_SPEED, speed + SPEED_GAIN * dt); // levels keep a fixed speed
@@ -991,6 +1062,26 @@
     ctx.restore();
   }
 
+  // green diamonds where practice checkpoints were placed (the newest one is brighter)
+  function drawCheckpoints() {
+    checkpoints.forEach((cp, i) => {
+      const x = player.x + CUBE / 2 - (distance - cp.dist), y = cp.y + CUBE / 2;
+      if (x < -30 || x > W + 30) return;
+      const newest = i === checkpoints.length - 1;
+      ctx.globalAlpha = newest ? 1 : 0.45;
+      ctx.strokeStyle = 'rgba(77,255,136,0.5)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, y + 12); ctx.lineTo(x, GROUND_Y); ctx.stroke();
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+      ctx.shadowColor = '#4dff88'; ctx.shadowBlur = newest ? 14 : 0;
+      ctx.fillStyle = '#4dff88'; ctx.fillRect(-8, -8, 16, 16);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(-8, -8, 16, 16);
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+  }
+
   function draw() {
     // map game units to screen pixels (sharp on retina screens)
     ctx.setTransform(viewScale * dpr, 0, 0, viewScale * dpr, 0, 0);
@@ -1025,7 +1116,8 @@
     }
     ctx.globalAlpha = 1;
 
-    if (state !== 'dead') drawCube();
+    if (inPractice) drawCheckpoints();
+    if (state !== 'dead' && state !== 'respawn') drawCube();
     if (showHitboxes) drawHitboxes();
 
     ctx.restore();
@@ -1053,13 +1145,14 @@
       ctx.fillText(mode ? progress() + '%' : Math.floor(distance / 10), 24, 46);
       ctx.font = '600 14px -apple-system, system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.fillText(mode ? `${mode.name.toUpperCase()} · BEST ${levelBest(mode)}%` : 'BEST ' + best, 24, 68);
+      ctx.fillText(inPractice ? `PRACTICE · ATTEMPT ${attempt} · ◆ ${checkpoints.length}`
+        : mode ? `${mode.name.toUpperCase()} · BEST ${levelBest(mode)}%` : 'BEST ' + best, 24, 68);
       ctx.shadowBlur = 0;
       if (mode) {
         // centred at the top; drops below the top-right buttons when the screen is narrow
         const bw = Math.min(320, W * 0.35), bx = (W - bw) / 2, fill = bw * progress() / 100;
         const buttonsLeft = (window.innerWidth - $('controls').offsetWidth - 20) / viewScale;
-        const by = bx + bw < buttonsLeft ? 30 : 62 / viewScale;
+        const by = bx + bw < buttonsLeft ? 30 : Math.max(62 / viewScale, 84); // below the buttons and the text
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         rrect(bx, by, bw, 12, 6); ctx.fill();
         if (fill > 0) {
