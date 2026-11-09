@@ -139,7 +139,7 @@
   $('menuHint').textContent = isTouch
     ? 'Pick a level · tap to jump · hold to keep jumping'
     : 'Pick a level (or press 1–4) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes';
-  $('pauseHint').textContent = isTouch ? 'or tap anywhere to resume' : 'P, Space or click to resume · M or Esc for menu';
+  $('pauseHint').textContent = isTouch ? '' : 'P to resume · M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
   // ---- Tunables ----
@@ -309,7 +309,7 @@
 
   // Jump input. On the main menu only a level button (or Space/Enter/1–4) starts the game.
   function press(fromPointer) {
-    if (state === 'paused') { state = 'playing'; holdJump = false; return; } // resume without jumping
+    if (state === 'paused') return; // only the Resume button (or ▶ / P) resumes
     if (state === 'menu') { if (!fromPointer) startGame(lastMode); return; }
     if (state === 'complete' || state === 'dead') return; // after a crash, only the Retry button restarts
     holdJump = true;
