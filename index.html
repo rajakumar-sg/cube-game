@@ -876,11 +876,16 @@
   }
 
   // ---- Loop ----
-  let last = performance.now();
+  // Physics always runs in fixed 1/120 s steps, whatever the screen's frame rate (30, 60, 120 Hz…),
+  // so jumps feel the same on every device and the levels play exactly as they were tested.
+  const STEP = 1 / 120;
+  let last = performance.now(), acc = 0;
   function frame(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
+    acc += Math.min(0.1, (now - last) / 1000);
     last = now;
-    update(dt);
+    let steps = 0;
+    while (acc >= STEP && steps < 12) { update(STEP); acc -= STEP; steps++; }
+    if (steps === 12) acc = 0; // way behind (e.g. tab was asleep): don't try to catch up
     draw();
     syncUI();
     requestAnimationFrame(frame);
