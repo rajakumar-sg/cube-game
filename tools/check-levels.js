@@ -51,8 +51,10 @@ function analyse(lv, K) {
   // apply one screen frame (K physics steps) with the key held or not
   const frame = (n, p, hold) => { for (let k = 0; k < K; k++) { const s = n * K + k; if (s >= endStep) return { p, done: true }; p = phys(p, (s + 1) * dx, hold, obs); if (!p) return null; } return { p, done: (n + 1) * K >= endStep }; };
   const memo = new Map();
+  let furthest = 0; // furthest screen frame any attempt reached (to report where an impossible level gets stuck)
   const key = (n, p) => n + ':' + p.y.toFixed(2) + ':' + p.vy.toFixed(1) + ':' + p.g;
   function win(n, p) {
+    if (n > furthest) furthest = n;
     const k = key(n, p);
     if (memo.has(k)) return memo.get(k);
     memo.set(k, false);
@@ -67,15 +69,18 @@ function analyse(lv, K) {
   }
   function willLandWithin(p, n) { const r = frame(n, p, false); return !r || r.p.g; }
   const start = { y: GROUND_Y - CUBE, vy: 0, g: true };
-  if (!win(0, start)) return { ok: false };
+  if (!win(0, start)) {
+    const col = Math.max(0, Math.floor((furthest * K * dx - RUNWAY) / 40));
+    return { ok: false, where: `stuck near column ${col}: "${lv.map.slice(Math.max(0, col - 4), col + 6)}"` };
+  }
   return { ok: true };
 }
 
 for (const lv of LEVELS) {
-  const row = [lv.name.padEnd(12)];
+  const row = [lv.name.padEnd(14)];
   for (const [fps, K] of [[30, 4], [60, 2], [120, 1]]) {
     const r = analyse(lv, K);
-    row.push(`${fps}fps: ${r.ok ? 'possible' : 'IMPOSSIBLE'}`);
+    row.push(`${fps}fps: ${r.ok ? 'possible' : 'IMPOSSIBLE (' + r.where + ')'}`);
   }
   console.log(row.join(' | '));
 }
