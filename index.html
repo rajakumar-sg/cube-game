@@ -173,7 +173,7 @@
   // Spike hitbox: a small rectangle in the middle of the 40x40 spike
   const SPIKE_HB_W = 12;         // width, centred horizontally
   const SPIKE_HB_H = 20;         // height
-  const SPIKE_HB_TOP = 10;       // gap from the spike's tip down to the top of the hitbox
+  const SPIKE_HB_TOP = 14;       // gap from the spike's tip down to the top of the hitbox
   function spikeBox(s) {
     return { x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H };
   }
