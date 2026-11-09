@@ -140,7 +140,7 @@
     ? 'Pick a level · tap to jump · hold to keep jumping'
     : 'Pick a level (or press 1–4) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes';
   $('pauseHint').textContent = isTouch ? 'or tap anywhere to resume' : 'P, Space or click to resume · M or Esc for menu';
-  $('crashHint').textContent = isTouch ? 'or tap anywhere to retry' : 'Space or click to retry · M or Esc for menu';
+  $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
   // ---- Tunables ----
   const CUBE = 40;               // cube size (outer hitbox: lands on / stands on blocks)
@@ -311,8 +311,7 @@
   function press(fromPointer) {
     if (state === 'paused') { state = 'playing'; holdJump = false; return; } // resume without jumping
     if (state === 'menu') { if (!fromPointer) startGame(lastMode); return; }
-    if (state === 'complete') return;
-    if (state === 'dead') { reset(); state = 'playing'; }
+    if (state === 'complete' || state === 'dead') return; // after a crash, only the Retry button restarts
     holdJump = true;
   }
   function release() { holdJump = false; }
@@ -342,7 +341,6 @@
     }
     if (e.code === 'Enter' && !e.repeat) {
       if (state === 'menu') { startGame(lastMode); return; }
-      if (state === 'dead') { startGame(); return; }
       if (state === 'complete') { nextLevel(); return; }
     }
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(false); else if (state === 'playing') holdJump = true; }
