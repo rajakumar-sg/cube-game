@@ -139,7 +139,7 @@
   $('menuHint').textContent = isTouch
     ? 'Pick a level · tap to jump · hold to keep jumping'
     : 'Pick a level (or press 1–4) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes';
-  $('pauseHint').textContent = isTouch ? '' : 'P to resume · M or Esc for menu';
+  $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
   // ---- Tunables ----
@@ -316,7 +316,7 @@
   }
   function release() { holdJump = false; }
 
-  // P pauses and resumes; only works mid-run
+  // Pause / resume toggle used by the buttons (the P key only pauses); only works mid-run
   function togglePause() {
     if (state === 'playing') { state = 'paused'; holdJump = false; }
     else if (state === 'paused') { state = 'playing'; }
@@ -332,7 +332,7 @@
 
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyH' && !e.repeat) { toggleHitboxes(); return; }
-    if (e.code === 'KeyP' && !e.repeat) { togglePause(); return; }
+    if (e.code === 'KeyP' && !e.repeat) { if (state === 'playing') togglePause(); return; } // P pauses; only buttons resume
     if ((e.code === 'Escape' || e.code === 'KeyM') && (state === 'paused' || state === 'dead' || state === 'complete')) { goMenu(); return; }
     if (state === 'menu' && /^Digit[1-9]$/.test(e.code)) {
       const n = Number(e.code.slice(5)) - 1;
@@ -394,7 +394,7 @@
       $('nextBtn').hidden = i === LEVELS.length - 1;
     }
     pauseBtn.hidden = state !== 'playing' && state !== 'paused';
-    pauseBtn.textContent = (state === 'paused' ? '▶' : '❚❚') + (isTouch ? '' : ' (P)');
+    pauseBtn.textContent = state === 'paused' ? '▶' : '❚❚' + (isTouch ? '' : ' (P)');
     pauseBtn.setAttribute('aria-label', state === 'paused' ? 'Resume' : 'Pause');
     pauseBtn.classList.toggle('on', state === 'paused');
   }
