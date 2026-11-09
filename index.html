@@ -196,6 +196,7 @@
   let state = 'menu';            // menu | playing | paused | dead | complete
   let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
   let mode = null;               // the level being played, or null for Endless
+  let rings = [], clock = 0, menuT = 0, trailTick = 0;   // visual effects only
   let finishX = 0, levelLength = 1;
   best = Number(localStorageGet('cubeJumpBest') || 0);   // Endless best score
 
@@ -263,7 +264,7 @@
 
   const music = (() => {
     let ac = null, master = null, noise = null;
-    let song = null, songOut = null, timer = null, step = 0, nextTime = 0, paused = false;
+    let song = null, songOut = null, timer = null, step = 0, nextTime = 0, paused = false, kickTimes = [];
     let muted = localStorageGet('cubeJumpMuted') === '1';
 
     const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -341,7 +342,7 @@
         const c = chord(song.chords[bar], 4);
         tone('square', freq(c[[0, 1, 2, 1][i % 4]] + 12), t, sd * 0.5, 0.02, out);
       }
-      if (song.kick[i] === 'k') kick(t, out);
+      if (song.kick[i] === 'k') { kick(t, out); kickTimes.push(t); }
       if (song.snare[i] === 's') hit(t, 0.14, 0.3, 'highpass', 1200, out);
       if (song.hat[i] === 'h') hit(t, 0.035, 0.07, 'highpass', 7000, out);
     }
@@ -406,7 +407,16 @@
       localStorageSet('cubeJumpMuted', m ? '1' : '0');
       if (master) master.gain.setTargetAtTime(m ? 0 : 0.5, ac.currentTime, 0.02);
     }
-    return { play, stop, pause, resume, crash, win, setMuted, isMuted: () => muted };
+    // 1 right on a kick drum, fading to 0 — lets the scenery pulse with the music
+    function beat() {
+      if (!ac || !song || paused) return 0;
+      const now = ac.currentTime;
+      kickTimes = kickTimes.filter(k => k > now - 1);
+      let lastKick = -1;
+      for (const k of kickTimes) if (k <= now && k > lastKick) lastKick = k;
+      return lastKick < 0 ? 0 : Math.exp(-(now - lastKick) * 7);
+    }
+    return { play, stop, pause, resume, crash, win, setMuted, beat, isMuted: () => muted };
   })();
 
   function buildLevel(lv) {
@@ -423,9 +433,10 @@
   }
 
   function reset() {
-    player = { x: 180, y: GROUND_Y - CUBE, vy: 0, rot: 0, onGround: true };
+    player = { x: 180, y: GROUND_Y - CUBE, vy: 0, rot: 0, onGround: true, squash: 0, trail: [] };
     obstacles = [];
     particles = [];
+    rings = [];
     speed = mode ? mode.speed : START_SPEED;
     distance = 0;
     spawnIn = 500;
@@ -487,6 +498,7 @@
     music.stop();
     music.win();
     localStorageSet('cubeJumpLevel:' + mode.id, 100);
+    rings.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, r: 8, v: 700, life: 1, color: '77,255,136' });
     // confetti
     const colors = ['#ffd23f', '#4dff88', '#4dc3ff', '#ff5c5c', '#ff3df0'];
     for (let i = 0; i < 80; i++) {
@@ -627,9 +639,11 @@
     music.stop();
     music.crash();
     if (navigator.vibrate) navigator.vibrate(80);
-    for (let i = 0; i < 30; i++) {
-      const a = Math.random() * Math.PI * 2, v = 150 + Math.random() * 350;
-      particles.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 200, life: 1, size: 4 + Math.random() * 6 });
+    const cx = player.x + CUBE / 2, cy = player.y + CUBE / 2;
+    rings.push({ x: cx, y: cy, r: 8, v: 520, life: 1, color: '255,190,60' });
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2, v = 150 + Math.random() * 420;
+      particles.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 200, life: 1, size: 4 + Math.random() * 7, glow: true, color: ['#ffd23f', '#ff9a1f', '#fff3b0'][i % 3] });
     }
     if (mode) {
       if (progress() > levelBest(mode)) localStorageSet('cubeJumpLevel:' + mode.id, progress());
@@ -642,14 +656,28 @@
   // ---- Update ----
   function update(dt) {
     if (state === 'paused') return; // freeze everything, including particles
-    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * 0.5 * dt; p.life -= dt * 1.2; }
+    clock += dt;
+    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * (p.g ?? 0.5) * dt; p.life -= dt * 1.2; }
     particles = particles.filter(p => p.life > 0);
+    for (const r of rings) { r.r += r.v * dt; r.life -= dt * 2.2; }
+    rings = rings.filter(r => r.life > 0);
     if (shake > 0) shake = Math.max(0, shake - 60 * dt);
+    player.squash *= Math.exp(-dt * 12);
 
-    // main menu: just scroll the scenery slowly behind the menu
+    // main menu: scroll the scenery slowly and let the cube hop along behind the menu
     if (state === 'menu') {
       distance += 120 * dt;
       groundOffset = (groundOffset + 120 * dt) % 40;
+      menuT += dt;
+      const period = 1.1, ph = menuT % period;
+      if (ph < AIR_TIME) {
+        const u = ph / AIR_TIME;
+        player.y = GROUND_Y - CUBE - (JUMP_V * JUMP_V / (2 * GRAVITY)) * 4 * u * (1 - u);
+        player.rot = (Math.floor(menuT / period) + u) * Math.PI;
+      } else {
+        if (ph - dt < AIR_TIME) player.squash = 0.9;
+        player.y = GROUND_Y - CUBE;
+      }
       return;
     }
 
@@ -660,8 +688,9 @@
     distance += dx;
     groundOffset = (groundOffset + dx) % 40;
 
-    // move obstacles
+    // move obstacles (and the cube's ghost trail, which lives in world space)
     for (const o of obstacles) o.x -= dx;
+    for (const g of player.trail) g.x -= dx;
     obstacles = obstacles.filter(o => o.x + o.w > -50);
     if (mode) {
       finishX -= dx;
@@ -672,7 +701,8 @@
     }
 
     // jump (hold to keep bouncing)
-    if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; }
+    if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; player.squash = -0.7; }
+    const wasOnGround = player.onGround;
 
     // vertical movement
     player.vy += GRAVITY * dt;
@@ -700,19 +730,266 @@
       if (o.t === 's' && rectsOverlap(inner, spikeBox(o))) return die();
     }
 
+    // landing: squash and kick up a little dust
+    if (!wasOnGround && player.onGround) {
+      player.squash = 0.9;
+      for (let i = 0; i < 8; i++) {
+        particles.push({ x: player.x + Math.random() * CUBE, y: player.y + CUBE, vx: -60 - Math.random() * 140, vy: -40 - Math.random() * 90, life: 0.5, size: 3 + Math.random() * 3, g: 0.15, color: 'rgba(255,255,255,0.7)' });
+      }
+    }
+
+    // ghost trail
+    trailTick += dt;
+    if (trailTick >= 1 / 40) {
+      trailTick = 0;
+      player.trail.push({ x: player.x, y: player.y, rot: player.rot });
+      if (player.trail.length > 6) player.trail.shift();
+    }
+
     // rotation: spin in air, snap to nearest 90° on ground
     if (player.onGround) {
       const target = Math.round(player.rot / (Math.PI / 2)) * (Math.PI / 2);
       player.rot += (target - player.rot) * Math.min(1, dt * 20);
     } else {
       player.rot += dt * Math.PI / AIR_TIME; // half a turn per jump
-      // trail
-      if (Math.random() < 0.6) particles.push({ x: player.x + 4, y: player.y + CUBE - 6, vx: -speed * 0.3, vy: 0, life: 0.5, size: 5 });
+      // sparkles while in the air
+      if (Math.random() < 0.3) particles.push({ x: player.x + 6, y: player.y + CUBE / 2 + (Math.random() - 0.5) * 24, vx: -speed * 0.4, vy: (Math.random() - 0.5) * 40, life: 0.45, size: 2 + Math.random() * 3, g: 0, glow: true, color: '#ffcf4d' });
     }
   }
 
   // ---- Draw ----
   function hue() { return ((mode ? mode.hue : 200) + distance / 40) % 360; }
+  const TAU = Math.PI * 2;
+  const rnd = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }; // fixed "random" for scenery
+
+  // height of a smooth hill line at screen x (a few sine waves; `scroll` moves the layer)
+  function hillY(x, scroll, amp, seed) {
+    const u = (x + scroll) / 160;
+    return GROUND_Y - amp * (0.5 + 0.3 * Math.sin(u + seed) + 0.15 * Math.sin(u * 2.3 + seed * 2) + 0.05 * Math.sin(u * 5.1 + seed * 3));
+  }
+  function rrect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawSky(h, beat) {
+    const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    sky.addColorStop(0, `hsl(${h}, 70%, 8%)`);
+    sky.addColorStop(0.6, `hsl(${(h + 25) % 360}, 65%, 20%)`);
+    sky.addColorStop(1, `hsl(${(h + 50) % 360}, 75%, 36%)`);
+    ctx.fillStyle = sky;
+    ctx.fillRect(-20, -20, W + 40, GROUND_Y + 40);
+
+    // twinkling stars (drift very slowly)
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 60; i++) {
+      const span = W + 100;
+      const x = ((rnd(i) * span - distance * 0.03) % span + span) % span - 50;
+      const y = rnd(i + 99) * GROUND_Y * 0.7;
+      const twinkle = 0.4 + 0.6 * Math.abs(Math.sin(clock * (0.8 + rnd(i + 7) * 2) + i));
+      ctx.globalAlpha = twinkle * (0.35 + 0.65 * rnd(i + 3)) * (1 - y / (GROUND_Y * 0.8));
+      const sz = rnd(i + 5) < 0.15 ? 2.5 : 1.5;
+      ctx.fillRect(x, y, sz, sz);
+    }
+    ctx.globalAlpha = 1;
+
+    // big striped retro sun with a glow that pulses on the beat
+    const sx = W * 0.68, sy = GROUND_Y * 0.62, sr = Math.min(W, GROUND_Y) * 0.2 * (1 + 0.035 * beat);
+    const halo = ctx.createRadialGradient(sx, sy, sr * 0.8, sx, sy, sr * 2.4);
+    halo.addColorStop(0, `hsla(${(h + 60) % 360}, 100%, 60%, ${0.3 + 0.25 * beat})`);
+    halo.addColorStop(1, `hsla(${(h + 60) % 360}, 100%, 60%, 0)`);
+    ctx.fillStyle = halo;
+    ctx.fillRect(sx - sr * 2.5, sy - sr * 2.5, sr * 5, sr * 5);
+    const sun = ctx.createLinearGradient(0, sy - sr, 0, sy + sr);
+    sun.addColorStop(0, `hsl(${(h + 70) % 360}, 100%, 72%)`);
+    sun.addColorStop(1, `hsl(${(h + 20) % 360}, 100%, 55%)`);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(sx, sy, sr, 0, TAU); ctx.clip();
+    ctx.fillStyle = sun;
+    ctx.fillRect(sx - sr, sy - sr, sr * 2, sr * 2);
+    ctx.fillStyle = sky; // stripes painted in sky colour look like gaps
+    for (let k = 0; k < 6; k++) {
+      const yy = sy + ((k + (clock * 0.25) % 1) / 6) * sr;
+      ctx.fillRect(sx - sr, yy, sr * 2, 1.5 + k * 1.3);
+    }
+    ctx.restore();
+
+    // two layers of hills: the farther one moves slower
+    const layers = [
+      { par: 0.08, amp: GROUND_Y * 0.42, seed: 1, col: `hsl(${(h + 30) % 360}, 45%, 20%)` },
+      { par: 0.18, amp: GROUND_Y * 0.26, seed: 4, col: `hsl(${(h + 15) % 360}, 50%, 12%)` },
+    ];
+    for (const L of layers) {
+      ctx.beginPath();
+      ctx.moveTo(-20, GROUND_Y);
+      for (let x = -20; x <= W + 36; x += 16) ctx.lineTo(x, hillY(x, distance * L.par, L.amp, L.seed));
+      ctx.lineTo(W + 40, GROUND_Y);
+      ctx.closePath();
+      ctx.fillStyle = L.col;
+      ctx.fill();
+    }
+
+    // slowly spinning outline squares in the middle distance
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = `hsla(${(h + 160) % 360}, 100%, 70%, ${0.12 + 0.12 * beat})`;
+    for (let i = 0; i < 10; i++) {
+      const span = W + 200;
+      const x = ((i * 173 - distance * 0.35) % span + span) % span - 100;
+      const y = (0.12 + rnd(i + 40) * 0.55) * GROUND_Y;
+      const sz = 16 + rnd(i + 50) * 30;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(clock * (0.2 + rnd(i) * 0.4) + i);
+      ctx.strokeRect(-sz / 2, -sz / 2, sz, sz);
+      ctx.restore();
+    }
+  }
+
+  function drawGround(h, accent, beat) {
+    const gh = H - GROUND_Y;
+    const gg = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+    gg.addColorStop(0, `hsl(${h}, 55%, 15%)`);
+    gg.addColorStop(1, `hsl(${h}, 60%, 4%)`);
+    ctx.fillStyle = gg;
+    ctx.fillRect(-20, GROUND_Y, W + 40, gh + 20);
+
+    // perspective grid: lines fan out toward the viewer and scroll with the world
+    ctx.strokeStyle = `hsla(${(h + 160) % 360}, 100%, 65%, 0.16)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const vx = W / 2;
+    for (let x = -groundOffset - 400; x < W + 400; x += 40) { ctx.moveTo(x, GROUND_Y); ctx.lineTo(vx + (x - vx) * 3, H + 20); }
+    const phase = (distance / 40) % 1;
+    for (let k = 1; k <= 8; k++) { const f = (k - phase) / 8, y = GROUND_Y + gh * f * f; ctx.moveTo(-20, y); ctx.lineTo(W + 20, y); }
+    ctx.stroke();
+
+    // glowing edge where the floor starts
+    const glow = ctx.createLinearGradient(0, GROUND_Y - 14, 0, GROUND_Y + 22);
+    glow.addColorStop(0, 'rgba(0,0,0,0)');
+    glow.addColorStop(0.4, accent.replace('hsl', 'hsla').replace(')', `, ${0.25 + 0.3 * beat})`));
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-20, GROUND_Y - 14, W + 40, 36);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-20, GROUND_Y - 1, W + 40, 2.5);
+  }
+
+  function drawBlock(o, h, accent) {
+    const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+    g.addColorStop(0, `hsl(${h}, 45%, 27%)`);
+    g.addColorStop(1, `hsl(${h}, 50%, 10%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    // an inset panel per cube-height
+    ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+    ctx.lineWidth = 2;
+    for (let yy = o.y; yy < o.y + o.h - 1; yy += 40) ctx.strokeRect(o.x + 9, yy + 9, o.w - 18, 22);
+    // glowing outline (a wide faint stroke under a thin bright one)
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.25; ctx.lineWidth = 6;
+    ctx.strokeRect(o.x + 1, o.y + 1, o.w - 2, o.h - 2);
+    ctx.globalAlpha = 1; ctx.lineWidth = 2;
+    ctx.strokeRect(o.x + 1, o.y + 1, o.w - 2, o.h - 2);
+    // shine along the top
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(o.x + 3, o.y + 3, o.w - 6, 2);
+  }
+
+  function drawSpike(o, h) {
+    const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+    g.addColorStop(0, `hsl(${h}, 30%, 82%)`);
+    g.addColorStop(0.35, `hsl(${h}, 35%, 35%)`);
+    g.addColorStop(1, `hsl(${h}, 45%, 8%)`);
+    ctx.beginPath();
+    ctx.moveTo(o.x + 1, o.y + o.h); ctx.lineTo(o.x + o.w / 2, o.y); ctx.lineTo(o.x + o.w - 1, o.y + o.h);
+    ctx.closePath();
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 5; ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.8; ctx.stroke();
+    // a shine on the left face
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w / 2, o.y + 6); ctx.lineTo(o.x + 10, o.y + o.h - 3); ctx.lineTo(o.x + o.w / 2 - 2, o.y + o.h - 3);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    ctx.fill();
+  }
+
+  function drawFinish(accent) {
+    const glow = ctx.createLinearGradient(finishX - 40, 0, finishX + 80, 0);
+    glow.addColorStop(0, 'rgba(255,255,255,0)');
+    glow.addColorStop(0.5, 'rgba(255,255,255,0.25)');
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(finishX - 40, 0, 120, GROUND_Y);
+    for (let y = GROUND_Y - 20, row = 0; y > -20; y -= 20, row++) {
+      for (let c = 0; c < 2; c++) {
+        ctx.fillStyle = (row + c) % 2 ? '#fff' : '#111';
+        ctx.fillRect(finishX + c * 20, y, 20, 20);
+      }
+    }
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    ctx.strokeRect(finishX, -2, 40, GROUND_Y + 2);
+  }
+
+  function drawCube() {
+    const cx = player.x + CUBE / 2;
+    // ghost trail
+    player.trail.forEach((g, i) => {
+      const a = (i + 1) / (player.trail.length + 1), sz = CUBE * (0.55 + 0.45 * a);
+      ctx.save();
+      ctx.translate(g.x + CUBE / 2, g.y + CUBE / 2);
+      ctx.rotate(g.rot);
+      ctx.globalAlpha = a * 0.22;
+      ctx.fillStyle = '#ffb02e';
+      ctx.fillRect(-sz / 2, -sz / 2, sz, sz);
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+
+    // soft shadow on whatever is underneath (shrinks as the cube rises)
+    let surface = GROUND_Y;
+    for (const o of obstacles) if (o.t === 'b' && o.x < player.x + CUBE && o.x + o.w > player.x && o.y >= player.y + CUBE - 2) surface = Math.min(surface, o.y);
+    const near = Math.max(0.2, 1 - Math.max(0, surface - (player.y + CUBE)) / 150);
+    ctx.fillStyle = `rgba(0,0,0,${0.35 * near})`;
+    ctx.beginPath();
+    ctx.ellipse(cx, surface + 2, CUBE * 0.6 * near, 5 * near, 0, 0, TAU);
+    ctx.fill();
+
+    // the cube: squash & stretch around its bottom (visual only — the hitbox doesn't change)
+    const sq = player.squash;
+    ctx.save();
+    ctx.translate(cx, player.y + CUBE);
+    ctx.scale(1 + 0.18 * sq, 1 - 0.18 * sq);
+    ctx.translate(0, -CUBE / 2);
+    ctx.rotate(player.rot);
+    const half = CUBE / 2;
+    ctx.shadowColor = 'rgba(255,190,60,0.8)';
+    ctx.shadowBlur = 18;
+    const body = ctx.createLinearGradient(-half, -half, half, half);
+    body.addColorStop(0, '#ffe56e');
+    body.addColorStop(1, '#ff961c');
+    ctx.fillStyle = body;
+    rrect(-half, -half, CUBE, CUBE, 5); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#5a3500'; ctx.lineWidth = 3;
+    rrect(-half + 1.5, -half + 1.5, CUBE - 3, CUBE - 3, 4); ctx.stroke();
+    // bevel highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-half + 5, half - 9); ctx.lineTo(-half + 5, -half + 5); ctx.lineTo(half - 9, -half + 5); ctx.stroke();
+    // face
+    ctx.fillStyle = '#2b1a00';
+    rrect(-11, -9, 8, 9, 2); ctx.fill();
+    rrect(4, -9, 8, 9, 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-7, -8, 3, 3); ctx.fillRect(8, -8, 3, 3);
+    ctx.fillStyle = '#2b1a00';
+    rrect(-7, 5, 15, 4, 2); ctx.fill();
+    ctx.restore();
+  }
 
   function draw() {
     // map game units to screen pixels (sharp on retina screens)
@@ -720,101 +997,45 @@
     ctx.save();
     if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
 
-    // background gradient shifts color as you go
-    const h = hue();
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, `hsl(${h}, 60%, 22%)`);
-    g.addColorStop(1, `hsl(${(h + 40) % 360}, 60%, 10%)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(-20, -20, W + 40, H + 40);
+    const h = hue(), beat = music.beat();
+    const accent = `hsl(${(h + 160) % 360}, 100%, 65%)`;
+    drawSky(h, beat);
+    drawGround(h, accent, beat);
+    if (mode && finishX < W + 80) drawFinish(accent);
 
-    // parallax squares in background
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    const skyScale = GROUND_Y / 420;
-    for (let i = 0; i < 12; i++) {
-      const x = ((i * 137 - distance * 0.2) % (W + 200) + W + 200) % (W + 200) - 100;
-      const y = (60 + (i * 53) % 260) * skyScale;
-      const s = 30 + (i * 17) % 50;
-      ctx.fillRect(x, y, s, s);
-    }
-
-    // ground
-    ctx.fillStyle = `hsl(${h}, 50%, 14%)`;
-    ctx.fillRect(-20, GROUND_Y, W + 40, H - GROUND_Y + 20);
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = 2;
-    for (let x = -groundOffset; x < W; x += 40) {
-      ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, H); ctx.stroke();
-    }
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(-20, GROUND_Y, W + 40, 3);
-
-    // finish line (levels only): a checkered band from the floor to the top
-    if (mode && finishX < W + 40) {
-      for (let y = GROUND_Y - 20, row = 0; y > -20; y -= 20, row++) {
-        for (let c = 0; c < 2; c++) {
-          ctx.fillStyle = (row + c) % 2 ? '#fff' : '#111';
-          ctx.fillRect(finishX + c * 20, y, 20, 20);
-        }
-      }
-    }
-
-    // obstacles
     for (const o of obstacles) {
       if (o.x > W + 60 || o.x + o.w < -60) continue; // off screen
-      if (o.t === 'b') {
-        ctx.fillStyle = '#1b1f3b';
-        ctx.fillRect(o.x, o.y, o.w, o.h);
-        ctx.strokeStyle = `hsl(${(h + 180) % 360}, 90%, 65%)`;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(o.x + 1.5, o.y + 1.5, o.w - 3, o.h - 3);
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1;
-        for (let yy = o.y + 20; yy < o.y + o.h; yy += 20) { ctx.beginPath(); ctx.moveTo(o.x + 3, yy); ctx.lineTo(o.x + o.w - 3, yy); ctx.stroke(); }
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(o.x, o.y + o.h);
-        ctx.lineTo(o.x + o.w / 2, o.y);
-        ctx.lineTo(o.x + o.w, o.y + o.h);
-        ctx.closePath();
-        ctx.fillStyle = '#111';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      }
+      if (o.t === 'b') drawBlock(o, h, accent); else drawSpike(o, h);
     }
 
-    // particles
+    // particles (glowing ones are added on top of what's below)
     for (const p of particles) {
-      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+      ctx.globalCompositeOperation = p.glow ? 'lighter' : 'source-over';
       ctx.fillStyle = p.color || '#ffd23f';
       ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
+    ctx.globalCompositeOperation = 'source-over';
+    // shockwave rings
+    for (const r of rings) {
+      ctx.globalAlpha = Math.max(0, r.life);
+      ctx.strokeStyle = `rgb(${r.color})`;
+      ctx.lineWidth = 3 + 6 * r.life;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+    }
     ctx.globalAlpha = 1;
 
-    // player
-    if (state !== 'dead') {
-      ctx.save();
-      ctx.translate(player.x + CUBE / 2, player.y + CUBE / 2);
-      ctx.rotate(player.rot);
-      ctx.fillStyle = '#ffd23f';
-      ctx.fillRect(-CUBE / 2, -CUBE / 2, CUBE, CUBE);
-      ctx.strokeStyle = '#3a2a00';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(-CUBE / 2 + 1.5, -CUBE / 2 + 1.5, CUBE - 3, CUBE - 3);
-      ctx.fillStyle = '#ff8c1a';
-      ctx.fillRect(-CUBE / 2 + 9, -CUBE / 2 + 9, CUBE - 18, CUBE - 18);
-      // eyes
-      ctx.fillStyle = '#3a2a00';
-      ctx.fillRect(-9, -7, 6, 6);
-      ctx.fillRect(4, -7, 6, 6);
-      ctx.restore();
-    }
-
+    if (state !== 'dead') drawCube();
     if (showHitboxes) drawHitboxes();
 
     ctx.restore();
+
+    // vignette: darken the edges a little
+    const vg = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.35, W / 2, H * 0.45, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
 
     // dim the game behind the pause / crash screens (their text and buttons are HTML)
     if (state === 'paused' || state === 'dead' || state === 'complete') {
@@ -824,22 +1045,31 @@
 
     // HUD during a run: progress bar + % for levels, score for Endless
     if (state !== 'menu') {
+      ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowBlur = 6;
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 28px -apple-system, system-ui, sans-serif';
+      ctx.font = '800 30px -apple-system, system-ui, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(mode ? progress() + '%' : Math.floor(distance / 10), 24, 44);
-      ctx.font = '16px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText(mode ? progress() + '%' : Math.floor(distance / 10), 24, 46);
+      ctx.font = '600 14px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
       ctx.fillText(mode ? `${mode.name.toUpperCase()} · BEST ${levelBest(mode)}%` : 'BEST ' + best, 24, 68);
+      ctx.shadowBlur = 0;
       if (mode) {
-        const bw = Math.min(320, W * 0.35), bx = (W - bw) / 2, by = 30;
-        ctx.fillStyle = 'rgba(0,0,0,0.35)';
-        ctx.fillRect(bx, by, bw, 10);
-        ctx.fillStyle = '#4dff88';
-        ctx.fillRect(bx, by, bw * progress() / 100, 10);
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(bx, by, bw, 10);
+        // centred at the top; drops below the top-right buttons when the screen is narrow
+        const bw = Math.min(320, W * 0.35), bx = (W - bw) / 2, fill = bw * progress() / 100;
+        const buttonsLeft = (window.innerWidth - $('controls').offsetWidth - 20) / viewScale;
+        const by = bx + bw < buttonsLeft ? 30 : 62 / viewScale;
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        rrect(bx, by, bw, 12, 6); ctx.fill();
+        if (fill > 0) {
+          const pg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+          pg.addColorStop(0, '#4dc3ff'); pg.addColorStop(1, '#4dff88');
+          ctx.fillStyle = pg;
+          rrect(bx, by, Math.max(12, fill), 12, 6); ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5;
+        rrect(bx, by, bw, 12, 6); ctx.stroke();
       }
     }
   }
