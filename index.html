@@ -42,8 +42,11 @@
   // ---- Tunables ----
   const CUBE = 40;               // cube size (outer hitbox: lands on / stands on blocks)
   const INNER = 12;              // inner hitbox inset per side -> 16x16 box; touching a spike or block with it = crash
-  const GRAVITY = 2600;          // px/s^2
-  const JUMP_V = -740;           // px/s (jump height ≈ JUMP_V² / (2·GRAVITY) ≈ 105px)
+  // Classic runner-cube jump: peaks just over 2 cube-heights (~84px) and lasts ~0.42s,
+  // with a quick, snappy fall. The cube spins exactly 180° per jump.
+  const GRAVITY = 3800;          // px/s^2
+  const JUMP_V = -800;           // px/s (height = JUMP_V² / (2·GRAVITY) ≈ 84px)
+  const AIR_TIME = 2 * -JUMP_V / GRAVITY; // ≈ 0.42s on flat ground
   const START_SPEED = 360;       // px/s
   const MAX_SPEED = 720;
   const SPEED_GAIN = 8;          // px/s gained per second
@@ -258,7 +261,7 @@
       const target = Math.round(player.rot / (Math.PI / 2)) * (Math.PI / 2);
       player.rot += (target - player.rot) * Math.min(1, dt * 20);
     } else {
-      player.rot += dt * 7.2;
+      player.rot += dt * Math.PI / AIR_TIME; // half a turn per jump
       // trail
       if (Math.random() < 0.6) particles.push({ x: player.x + 4, y: player.y + CUBE - 6, vx: -speed * 0.3, vy: 0, life: 0.5, size: 5 });
     }
