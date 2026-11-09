@@ -32,10 +32,61 @@
   #controls button.on { color: #4dff88; border-color: #4dff88; }
   #pauseBtn { min-width: 44px; }
   #pauseBtn[hidden] { display: none; }
+
+  /* Menu / pause / crash screens: laid over the sky part of the game (positioned from JS) */
+  .screen {
+    position: fixed; display: none; box-sizing: border-box; padding: 0 16px;
+    flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+    color: #fff; text-align: center;
+  }
+  .screen.show { display: flex; }
+  .screen h1, .screen h2 { margin: 0; font-weight: 800; line-height: 1; letter-spacing: 2px; text-shadow: 0 4px 0 rgba(0,0,0,0.35); }
+  .screen h1 { font-size: clamp(40px, 9vw, 76px); }
+  .screen h2 { font-size: clamp(34px, 7vw, 56px); }
+  .screen p { margin: 0; font-size: 18px; opacity: 0.9; }
+  .screen .hint { font-size: 14px; opacity: 0.65; max-width: 520px; line-height: 1.5; }
+  .screen .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .screen button { font-family: inherit; cursor: pointer; border-radius: 999px; }
+  .screen .big {
+    font-size: 22px; font-weight: 700; padding: 14px 40px; border: none;
+    background: #ffd23f; color: #2a1d00; box-shadow: 0 6px 0 #b8860b;
+  }
+  .screen .big:active { transform: translateY(4px); box-shadow: 0 2px 0 #b8860b; }
+  .screen .ghost {
+    font-size: 18px; font-weight: 600; padding: 12px 28px;
+    background: rgba(0,0,0,0.35); color: #fff; border: 1px solid rgba(255,255,255,0.35);
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+
+<div id="menuScreen" class="screen">
+  <h1>CUBE JUMP</h1>
+  <button id="playBtn" class="big" type="button" tabindex="-1">▶ Play</button>
+  <p id="menuBest"></p>
+  <p id="menuHint" class="hint"></p>
+</div>
+
+<div id="pauseScreen" class="screen">
+  <h2>PAUSED</h2>
+  <div class="row">
+    <button id="resumeBtn" class="big" type="button" tabindex="-1">▶ Resume</button>
+    <button id="pauseMenuBtn" class="ghost" type="button" tabindex="-1">Menu</button>
+  </div>
+  <p id="pauseHint" class="hint"></p>
+</div>
+
+<div id="crashScreen" class="screen">
+  <h2>CRASH!</h2>
+  <p id="crashScore"></p>
+  <div class="row">
+    <button id="retryBtn" class="big" type="button" tabindex="-1">↻ Retry</button>
+    <button id="crashMenuBtn" class="ghost" type="button" tabindex="-1">Menu</button>
+  </div>
+  <p id="crashHint" class="hint"></p>
+</div>
+
 <div id="controls">
   <button id="pauseBtn" type="button" tabindex="-1" hidden>❚❚</button>
   <button id="hitboxBtn" type="button" tabindex="-1">Hitboxes</button>
@@ -46,7 +97,15 @@
   const ctx = canvas.getContext('2d');
   const hitboxBtn = document.getElementById('hitboxBtn');
   const pauseBtn = document.getElementById('pauseBtn');
+  const $ = id => document.getElementById(id);
+  const screens = { menu: $('menuScreen'), paused: $('pauseScreen'), dead: $('crashScreen') };
   const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+
+  $('menuHint').textContent = isTouch
+    ? 'Tap to jump · hold to keep jumping · land on blocks, avoid spikes'
+    : 'Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes';
+  $('pauseHint').textContent = isTouch ? 'or tap anywhere to resume' : 'P, Space or click to resume · M or Esc for menu';
+  $('crashHint').textContent = isTouch ? 'or tap anywhere to retry' : 'Space or click to retry · M or Esc for menu';
 
   // ---- Tunables ----
   const CUBE = 40;               // cube size (outer hitbox: lands on / stands on blocks)
@@ -86,10 +145,19 @@
       for (const o of obstacles) o.y += dy;
       for (const p of particles) p.y += dy;
     }
+
+    // lay the menu/pause/crash screens over the sky (everything above the floor)
+    const r = canvas.getBoundingClientRect();
+    for (const el of Object.values(screens)) {
+      el.style.left = r.left + 'px';
+      el.style.top = r.top + 'px';
+      el.style.width = r.width + 'px';
+      el.style.height = GROUND_Y * viewScale + 'px';
+    }
   }
 
   // ---- State ----
-  let state = 'ready';           // ready | playing | paused | dead
+  let state = 'menu';            // menu | playing | paused | dead
   let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
   best = Number(localStorageGet('cubeJumpBest') || 0);
 
@@ -143,10 +211,14 @@
   }
 
   // ---- Input ----
-  function press() {
+  function startGame() { reset(); state = 'playing'; holdJump = false; }
+  function goMenu() { reset(); state = 'menu'; holdJump = false; }
+
+  // Jump input. On the main menu only the Play button (or Space/Enter) starts the game.
+  function press(fromPointer) {
     if (state === 'paused') { state = 'playing'; holdJump = false; return; } // resume without jumping
-    if (state === 'ready') { state = 'playing'; }
-    else if (state === 'dead') { reset(); state = 'playing'; }
+    if (state === 'menu') { if (!fromPointer) startGame(); return; }
+    if (state === 'dead') { reset(); state = 'playing'; }
     holdJump = true;
   }
   function release() { holdJump = false; }
@@ -168,27 +240,40 @@
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyH' && !e.repeat) { toggleHitboxes(); return; }
     if (e.code === 'KeyP' && !e.repeat) { togglePause(); return; }
-    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(); else holdJump = true; }
+    if ((e.code === 'Escape' || e.code === 'KeyM') && (state === 'paused' || state === 'dead')) { goMenu(); return; }
+    if (e.code === 'Enter' && !e.repeat && (state === 'menu' || state === 'dead')) { startGame(); return; }
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(false); else if (state === 'playing') holdJump = true; }
   });
   window.addEventListener('keyup', e => {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') release();
   });
 
-  // Mouse, finger or pen anywhere on the screen jumps (except on the hitbox button)
-  hitboxBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); toggleHitboxes(); });
-  pauseBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); togglePause(); });
+  // Buttons act on press (not click) and don't let the press reach the game as a jump
+  function onTap(el, fn) { el.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); fn(); }); }
+  onTap(hitboxBtn, toggleHitboxes);
+  onTap(pauseBtn, togglePause);
+  onTap($('playBtn'), startGame);
+  onTap($('resumeBtn'), togglePause);
+  onTap($('retryBtn'), startGame);
+  onTap($('pauseMenuBtn'), goMenu);
+  onTap($('crashMenuBtn'), goMenu);
 
-  // Pause button: shown only mid-run; shows ❚❚ while playing and ▶ while paused
-  let pauseBtnState = '';
-  function syncPauseBtn() {
-    if (pauseBtnState === state) return;
-    pauseBtnState = state;
+  // Show the right screen and button labels whenever the game state changes
+  let shownState = '';
+  function syncUI() {
+    if (shownState === state) return;
+    shownState = state;
+    for (const [name, el] of Object.entries(screens)) el.classList.toggle('show', name === state);
+    $('menuBest').textContent = best > 0 ? `Best ${best}` : '';
+    $('crashScore').textContent = `Score ${Math.floor(distance / 10)}   ·   Best ${best}`;
     pauseBtn.hidden = state !== 'playing' && state !== 'paused';
     pauseBtn.textContent = (state === 'paused' ? '▶' : '❚❚') + (isTouch ? '' : ' (P)');
     pauseBtn.setAttribute('aria-label', state === 'paused' ? 'Resume' : 'Pause');
     pauseBtn.classList.toggle('on', state === 'paused');
   }
-  window.addEventListener('pointerdown', e => { if (e.button === 0 || e.pointerType !== 'mouse') press(); });
+
+  // Mouse, finger or pen anywhere else on the screen jumps
+  window.addEventListener('pointerdown', e => { if (e.button === 0 || e.pointerType !== 'mouse') press(true); });
   window.addEventListener('pointerup', release);
   window.addEventListener('pointercancel', release);
   // Block iOS Safari's double-tap zoom, scrolling and long-press callouts
@@ -232,6 +317,13 @@
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * 0.5 * dt; p.life -= dt * 1.2; }
     particles = particles.filter(p => p.life > 0);
     if (shake > 0) shake = Math.max(0, shake - 60 * dt);
+
+    // main menu: just scroll the scenery slowly behind the menu
+    if (state === 'menu') {
+      distance += 120 * dt;
+      groundOffset = (groundOffset + 120 * dt) % 40;
+      return;
+    }
 
     if (state !== 'playing') return;
 
@@ -380,48 +472,21 @@
 
     ctx.restore();
 
-    // HUD
-    const score = Math.floor(distance / 10);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 28px -apple-system, system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(score, 24, 44);
-    ctx.font = '16px -apple-system, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('BEST ' + best, 24, 68);
+    // dim the game behind the pause / crash screens (their text and buttons are HTML)
+    if (state === 'paused' || state === 'dead') {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(0, 0, W, H);
+    }
 
-    // messages are centred in the sky above the floor
-    const cy = GROUND_Y * 0.5;
-    ctx.textAlign = 'center';
-    if (state === 'ready') {
+    // HUD (score) during a run
+    if (state !== 'menu') {
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 56px -apple-system, system-ui, sans-serif';
-      ctx.fillText('CUBE JUMP', W / 2, cy - 30);
-      ctx.font = '22px -apple-system, system-ui, sans-serif';
-      ctx.fillText(isTouch ? 'Tap anywhere to jump' : 'Press SPACE, ↑ or click to jump', W / 2, cy + 20);
+      ctx.font = 'bold 28px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(Math.floor(distance / 10), 24, 44);
       ctx.font = '16px -apple-system, system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillText('Hold to keep jumping · land on blocks · avoid spikes', W / 2, cy + 52);
-    } else if (state === 'dead') {
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 52px -apple-system, system-ui, sans-serif';
-      ctx.fillText('CRASH!', W / 2, cy - 10);
-      ctx.font = '24px -apple-system, system-ui, sans-serif';
-      ctx.fillText(`Score ${score}   ·   Best ${best}`, W / 2, cy + 35);
-      ctx.font = '18px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.fillText(isTouch ? 'Tap to try again' : 'Press SPACE or click to try again', W / 2, cy + 75);
-    } else if (state === 'paused') {
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 52px -apple-system, system-ui, sans-serif';
-      ctx.fillText('PAUSED', W / 2, cy);
-      ctx.font = '20px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.fillText(isTouch ? 'Tap to resume' : 'Press P, SPACE or click to resume', W / 2, cy + 42);
+      ctx.fillText('BEST ' + best, 24, 68);
     }
   }
 
@@ -463,7 +528,7 @@
     last = now;
     update(dt);
     draw();
-    syncPauseBtn();
+    syncUI();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
