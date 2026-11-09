@@ -124,6 +124,7 @@
 
 <div id="controls">
   <button id="pauseBtn" type="button" tabindex="-1" hidden>❚❚</button>
+  <button id="musicBtn" type="button" tabindex="-1">♪ Music</button>
   <button id="hitboxBtn" type="button" tabindex="-1">Hitboxes</button>
 </div>
 <script>
@@ -226,6 +227,188 @@
   // LEVELS-END
   const RUNWAY = 480;            // empty ground before a level's first column
 
+  // ---- Music ----
+  // Every level (and Endless) has its own original chiptune loop, generated live with the Web Audio API.
+  // A song is 4 bars of 16 steps (16th notes), one chord per bar.
+  //   lead:  a note (C5, F#4…) starts a note, '-' holds the previous note, '.' is a rest, '|' is just a bar line
+  //   bass:  one bar repeated with each bar's chord: R = root, O = root an octave up, F = fifth
+  //   drums: k = kick, s = snare, h = hi-hat, one bar repeated
+  //   arp:   true adds a quiet 16th-note arpeggio of each chord
+  const SONGS = {
+    'first-steps': {                    // happy and bouncy
+      bpm: 120, chords: ['C', 'G', 'Am', 'F'], arp: false,
+      lead: 'E5 . G5 . C6 . G5 . E5 . D5 . C5 . D5 . | D5 . G5 . B5 . G5 . D5 - - . B4 . D5 . | C5 . E5 . A5 . E5 . C5 . B4 . A4 . C5 . | A4 . C5 . F5 . A5 . G5 - - . E5 . D5 .',
+      bass: 'R . . . O . . . R . . . O . F .',
+      kick: 'k.......k.......', snare: '....s.......s...', hat: '..h...h...h...h.',
+    },
+    'block-party': {                    // funky
+      bpm: 128, chords: ['Am', 'F', 'C', 'G'], arp: false,
+      lead: 'A4 . . C5 . A4 . E5 . . D5 . C5 . A4 . | F4 . . A4 . C5 . F5 . . E5 . C5 . A4 . | G4 . . C5 . E5 . G5 . . E5 . D5 . C5 . | B4 . . D5 . G5 . B5 - - . A5 . G5 . D5',
+      bass: 'R . . R . . O . R . . R . F . O',
+      kick: 'k.....k...k.....', snare: '....s.......s..s', hat: 'h.h.h.h.h.h.h.h.',
+    },
+    'spike-storm': {                    // fast and intense
+      bpm: 150, chords: ['Em', 'C', 'D', 'Em'], arp: true,
+      lead: 'E5 . E5 . G5 . E5 . B5 . A5 . G5 . F#5 . | E5 . E5 . G5 . E5 . C6 . B5 . G5 . E5 . | F#5 . F#5 . A5 . F#5 . D6 . C6 . A5 . F#5 . | G5 . F#5 . E5 . D5 . E5 - - - B4 . D5 .',
+      bass: 'R . R . O . R . R . R . O . R .',
+      kick: 'k...k...k...k...', snare: '....s.......s...', hat: 'hhhhhhhhhhhhhhhh',
+    },
+    'endless': {                        // groovy
+      bpm: 136, chords: ['Dm', 'G', 'Dm', 'C'], arp: true,
+      lead: 'D5 . F5 . A5 . . G5 . F5 . D5 . . C5 . | B4 . D5 . G5 . . F5 . E5 . D5 . . B4 . | A4 . D5 . F5 . A5 . C6 . A5 . F5 . D5 . | E5 . G5 . C6 - - . B5 . G5 . E5 . C5 .',
+      bass: 'R . . O . . R . . R . O . . F .',
+      kick: 'k..k....k.k.....', snare: '....s.......s...', hat: 'h.hhh.hhh.hhh.hh',
+    },
+  };
+
+  const music = (() => {
+    let ac = null, master = null, noise = null;
+    let song = null, songOut = null, timer = null, step = 0, nextTime = 0, paused = false;
+    let muted = localStorageGet('cubeJumpMuted') === '1';
+
+    const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    const midi = name => { const m = /^([A-G])([#b]?)(\d)$/.exec(name); return 12 * (Number(m[3]) + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); };
+    const freq = n => 440 * Math.pow(2, (n - 69) / 12);
+    const chord = (name, octave) => { const m = /^([A-G][#b]?)(m?)$/.exec(name); const root = midi(m[1] + octave); return [root, root + (m[2] ? 3 : 4), root + 7]; };
+
+    function ensure() {
+      if (ac) return true;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      ac = new AC();
+      master = ac.createGain();
+      master.gain.value = muted ? 0 : 0.5;
+      master.connect(ac.destination);
+      noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      return true;
+    }
+    // Browsers (iPhone especially) only allow sound after a tap/click/key; unlock on the first one
+    function unlock() { if (ensure() && ac.state === 'suspended' && !paused) ac.resume(); }
+    ['pointerup', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, unlock, true));
+
+    function tone(type, f, t, dur, vol, out) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.005);
+      g.gain.setTargetAtTime(vol * 0.6, t + 0.01, 0.08);
+      g.gain.setValueAtTime(vol * 0.6, t + dur);
+      g.gain.linearRampToValueAtTime(0, t + dur + 0.03);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+    function hit(t, dur, vol, filterType, filterFreq, out) {
+      const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      s.buffer = noise; f.type = filterType; f.frequency.value = filterFreq;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      s.connect(f); f.connect(g); g.connect(out);
+      s.start(t); s.stop(t + dur + 0.02);
+    }
+    function kick(t, out) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+      g.gain.setValueAtTime(0.7, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + 0.16);
+    }
+
+    function prepare(def) {
+      const lead = def.lead.split(/\s+/).filter(x => x && x !== '|');
+      return { ...def, leadTokens: lead, bassTokens: def.bass.split(/\s+/), stepDur: 60 / def.bpm / 4 };
+    }
+    const prepared = {};
+    function getSong(key) { return prepared[key] || (prepared[key] = prepare(SONGS[key])); }
+
+    function playStep(s, t) {
+      const i = s % 16, bar = Math.floor(s / 16) % 4, sd = song.stepDur, out = songOut;
+      const tok = song.leadTokens[s % song.leadTokens.length];
+      if (tok !== '.' && tok !== '-') {
+        let len = 1;
+        while (song.leadTokens[(s + len) % song.leadTokens.length] === '-') len++;
+        tone('square', freq(midi(tok)), t, len * sd * 0.9, 0.06, out);
+      }
+      const b = song.bassTokens[i];
+      if (b !== '.') {
+        const [root, , fifth] = chord(song.chords[bar], 2);
+        tone('triangle', freq(b === 'O' ? root + 12 : b === 'F' ? fifth : root), t, sd * 1.8, 0.22, out);
+      }
+      if (song.arp) {
+        const c = chord(song.chords[bar], 4);
+        tone('square', freq(c[[0, 1, 2, 1][i % 4]] + 12), t, sd * 0.5, 0.02, out);
+      }
+      if (song.kick[i] === 'k') kick(t, out);
+      if (song.snare[i] === 's') hit(t, 0.14, 0.3, 'highpass', 1200, out);
+      if (song.hat[i] === 'h') hit(t, 0.035, 0.07, 'highpass', 7000, out);
+    }
+    function schedule() {
+      while (nextTime < ac.currentTime + 0.12) {
+        playStep(step, nextTime);
+        nextTime += song.stepDur;
+        step = (step + 1) % 64;
+      }
+    }
+
+    function stop() {
+      clearInterval(timer); timer = null; song = null;
+      if (!ac) return;
+      if (songOut) {
+        const g = songOut, now = ac.currentTime;
+        g.gain.cancelScheduledValues(now);
+        if (paused) g.gain.value = 0;
+        else { g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + 0.15); }
+        setTimeout(() => g.disconnect(), 400);
+        songOut = null;
+      }
+      if (paused) { paused = false; ac.resume(); }
+    }
+    function play(key) {
+      if (!SONGS[key] || !ensure()) return;
+      stop();
+      song = getSong(key);
+      songOut = ac.createGain();
+      songOut.connect(master);
+      step = 0;
+      nextTime = ac.currentTime + 0.06;
+      schedule();
+      timer = setInterval(schedule, 25);
+    }
+    function pause() { if (ac && song) { paused = true; ac.suspend(); } }
+    function resume() { if (ac && paused) { paused = false; ac.resume(); } }
+
+    function crash() {
+      if (!ensure()) return;
+      const t = ac.currentTime;
+      hit(t, 0.45, 0.5, 'lowpass', 1500, master);
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(220, t);
+      o.frequency.exponentialRampToValueAtTime(55, t + 0.3);
+      g.gain.setValueAtTime(0.12, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t + 0.35);
+    }
+    function win() {
+      if (!ensure()) return;
+      const t = ac.currentTime + 0.05;
+      ['C5', 'E5', 'G5', 'C6', 'E6', 'G6'].forEach((n, i) => tone('square', freq(midi(n)), t + i * 0.09, 0.12, 0.08, master));
+      tone('square', freq(midi('C6')), t + 0.6, 0.5, 0.08, master);
+      tone('triangle', freq(midi('C4')), t + 0.6, 0.5, 0.2, master);
+    }
+
+    function setMuted(m) {
+      muted = m;
+      localStorageSet('cubeJumpMuted', m ? '1' : '0');
+      if (master) master.gain.setTargetAtTime(m ? 0 : 0.5, ac.currentTime, 0.02);
+    }
+    return { play, stop, pause, resume, crash, win, setMuted, isMuted: () => muted };
+  })();
+
   function buildLevel(lv) {
     const startX = player.x + RUNWAY;
     [...lv.map].forEach((c, i) => {
@@ -288,8 +471,11 @@
 
   // ---- Input ----
   let lastMode = LEVELS[0];      // what Space/Enter starts from the menu
-  function startGame(m = mode) { mode = m; lastMode = m; reset(); state = 'playing'; holdJump = false; }
-  function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; }
+  function startGame(m = mode) {
+    mode = m; lastMode = m; reset(); state = 'playing'; holdJump = false;
+    music.play(mode ? mode.id : 'endless'); // each level's song starts from the top
+  }
+  function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; music.stop(); }
   function nextLevel() {
     const i = LEVELS.indexOf(mode);
     startGame(i >= 0 && i < LEVELS.length - 1 ? LEVELS[i + 1] : mode);
@@ -298,6 +484,8 @@
   function completeLevel() {
     state = 'complete';
     holdJump = false;
+    music.stop();
+    music.win();
     localStorageSet('cubeJumpLevel:' + mode.id, 100);
     // confetti
     const colors = ['#ffd23f', '#4dff88', '#4dc3ff', '#ff5c5c', '#ff3df0'];
@@ -318,8 +506,8 @@
 
   // Pause / resume toggle used by the buttons (the P key only pauses); only works mid-run
   function togglePause() {
-    if (state === 'playing') { state = 'paused'; holdJump = false; }
-    else if (state === 'paused') { state = 'playing'; }
+    if (state === 'playing') { state = 'paused'; holdJump = false; music.pause(); }
+    else if (state === 'paused') { state = 'playing'; music.resume(); }
   }
 
   let showHitboxes = false;
@@ -352,6 +540,13 @@
   // Buttons act on press (not click) and don't let the press reach the game as a jump
   function onTap(el, fn) { el.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); fn(); }); }
   onTap(hitboxBtn, toggleHitboxes);
+  // Music on/off (remembered); the setting also covers the crash and finish sounds
+  function syncMusicBtn() {
+    $('musicBtn').classList.toggle('on', !music.isMuted());
+    $('musicBtn').textContent = music.isMuted() ? '♪ Off' : '♪ On';
+  }
+  onTap($('musicBtn'), () => { music.setMuted(!music.isMuted()); syncMusicBtn(); });
+  syncMusicBtn();
   onTap(pauseBtn, togglePause);
   onTap($('resumeBtn'), togglePause);
   onTap($('retryBtn'), () => startGame());
@@ -409,7 +604,7 @@
   document.addEventListener('contextmenu', e => e.preventDefault());
   // If you switch tabs/apps mid-run, pause so you don't come back to a crash
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { release(); if (state === 'playing') state = 'paused'; }
+    if (document.hidden) { release(); if (state === 'playing') { state = 'paused'; music.pause(); } }
   });
 
   // ---- Physics helpers ----
@@ -429,6 +624,8 @@
   function die() {
     state = 'dead';
     shake = 14;
+    music.stop();
+    music.crash();
     if (navigator.vibrate) navigator.vibrate(80);
     for (let i = 0; i < 30; i++) {
       const a = Math.random() * Math.PI * 2, v = 150 + Math.random() * 350;
