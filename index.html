@@ -170,30 +170,17 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
 
   // ---- Physics helpers ----
-  const SPIKE_INSET = 6;
-  function spikeTri(s) {
-    return [[s.x + SPIKE_INSET, s.y + s.h], [s.x + s.w / 2, s.y + SPIKE_INSET], [s.x + s.w - SPIKE_INSET, s.y + s.h]];
+  // Spike hitbox: a small rectangle in the middle of the 40x40 spike
+  const SPIKE_HB_W = 12;         // width, centred horizontally
+  const SPIKE_HB_H = 20;         // height
+  const SPIKE_HB_TOP = 10;       // gap from the spike's tip down to the top of the hitbox
+  function spikeBox(s) {
+    return { x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H };
   }
   function outerBox() { return { x: player.x, y: player.y, w: CUBE, h: CUBE }; }
   function innerBox() { return { x: player.x + INNER, y: player.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER }; }
   function rectsOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  }
-  // Exact rectangle-vs-triangle test (separating axis theorem)
-  function rectHitsTri(r, tri) {
-    const rect = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
-    const axes = [[1, 0], [0, 1]];
-    for (let i = 0; i < 3; i++) {
-      const [x1, y1] = tri[i], [x2, y2] = tri[(i + 1) % 3];
-      axes.push([y1 - y2, x2 - x1]);
-    }
-    for (const [ax, ay] of axes) {
-      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
-      for (const [x, y] of rect) { const d = x * ax + y * ay; aMin = Math.min(aMin, d); aMax = Math.max(aMax, d); }
-      for (const [x, y] of tri) { const d = x * ax + y * ay; bMin = Math.min(bMin, d); bMax = Math.max(bMax, d); }
-      if (aMax <= bMin || bMax <= aMin) return false;
-    }
-    return true;
   }
 
   function die() {
@@ -253,7 +240,7 @@
     // spikes: only the INNER box can be hit
     const inner = innerBox();
     for (const o of obstacles) {
-      if (o.t === 's' && rectHitsTri(inner, spikeTri(o))) return die();
+      if (o.t === 's' && rectsOverlap(inner, spikeBox(o))) return die();
     }
 
     // rotation: spin in air, snap to nearest 90° on ground
@@ -411,14 +398,11 @@
         ctx.fillStyle = 'rgba(77,255,136,0.45)';
         ctx.fillRect(o.x, o.y, o.w, INNER);
       } else {
-        const [[x1, y1], [x2, y2], [x3, y3]] = spikeTri(o);
-        ctx.beginPath();
-        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255,77,77,0.35)';
-        ctx.fill();
+        const b = spikeBox(o);
+        ctx.fillStyle = 'rgba(255,77,77,0.45)';
+        ctx.fillRect(b.x, b.y, b.w, b.h);
         ctx.strokeStyle = '#ff4d4d';
-        ctx.stroke();
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
       }
     }
     // cube: outer box (blue outline) and inner box (filled)
