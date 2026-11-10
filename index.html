@@ -183,8 +183,8 @@
   const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
   $('menuHint').textContent = isTouch
-    ? 'Pick a level · tap to jump · hold to keep jumping · practice mode lets you place checkpoints'
-    : `Pick a level (keys 1–9, 0 and −, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · P pause · H hitboxes · in practice: C checkpoint, X undo`;
+    ? 'Pick a level · tap to jump · hold to keep jumping · in the ship, hold to fly · practice mode lets you place checkpoints'
+    : `Pick a level (keys 1–9, 0 and −, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · in the ship, hold to fly · P pause · H hitboxes · in practice: C checkpoint, X undo`;
   $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
@@ -196,6 +196,15 @@
   const GRAVITY = 3800;          // px/s^2
   const JUMP_V = -800;           // px/s (height = JUMP_V² / (2·GRAVITY) ≈ 84px)
   const AIR_TIME = 2 * -JUMP_V / GRAVITY; // ≈ 0.42s on flat ground
+  // Ship mode (between a SHIP portal and a CUBE portal): hold to fly up, let go to sink.
+  // It flies in a corridor between the floor and a ceiling CORRIDOR px above it, and can slide along both.
+  const SHIP_GRAVITY = 1400;     // px/s^2 pulling down while not holding
+  const SHIP_LIFT = 1400;        // px/s^2 pushing up while holding
+  const SHIP_MAX = 420;          // top climb / sink speed, px/s
+  const CORRIDOR = 320;          // floor-to-ceiling height in ship mode (8 cubes)
+  const THORN_H = 18;            // ground spikes lining the floor of every ship section: drawn height
+  const THORN_HB = 14;           // ...and hitbox height (touching it with the inner box = crash)
+  const THORN_GAP = 120;         // they start this far past the SHIP portal
   const START_SPEED = 360;       // px/s
   const MAX_SPEED = 720;
   const SPEED_GAIN = 8;          // px/s gained per second
@@ -261,6 +270,9 @@
   //   .  empty      ^  spike      1 2 3  block 1, 2 or 3 cubes tall
   //   A  1-tall block with a spike on top      B  2-tall block with a spike on top
   //   speed portals:  s = 0.5x   n = 1x   f = 2x   v = 3x   x = 4x
+  //   mode portals:   [ = SHIP (hold to fly)   ] = back to CUBE
+  // A level can also have a `ceil` string, lined up with `map`, for things hanging from the ship
+  // corridor's ceiling: 1 2 3 = hanging block, ^ = spike pointing down, A B = hanging block with a spike under it.
   // Every level has been checked with a solver to make sure it can be beaten.
   // Speed portals set an exact speed (px/s). Like the genre's portals the names aren't literal
   // multiples: 4x is about 1.85 times normal, so you can still see what's coming.
@@ -273,52 +285,65 @@
     f: { label: '2x', color: '#4dff88', arrows: 2 },
     v: { label: '3x', color: '#ff3df0', arrows: 3 },
     x: { label: '4x', color: '#ff4040', arrows: 4 },
+    '[': { label: 'SHIP', color: '#ffd23f', arrows: 0, ship: true },
+    ']': { label: 'CUBE', color: '#4dff88', arrows: 0, ship: false },
   };
   // LEVELS-START
   const LEVELS = [
     {
       id: 'first-steps', name: 'First Steps', difficulty: 'Easy', speed: 340, hue: 150,
-      map: '..........^.......^.......^^.......1.......1......^......11......^^......1...1..f...^...^......111......^^......1......^^^..n...11.1......^.^........',
+      map: '..........^.......^.......^^.......1.......1......^......11......^^...[......2..........22..........^^^^.........]...1...1..f...^...^......111......^^......1......^^^..n...11.1......^.^........',
+      ceil: '.................................................................................2...........22..........2',
     },
     {
       id: 'block-party', name: 'Block Party', difficulty: 'Normal', speed: 380, hue: 270,
-      map: '..........^.....11.....^^.....1.2......^.....A......12..f..^^^......1122..n...^.....A......2..2......^^....^^......112......1A.....^^^..s..12.21..n...^.^.^........',
+      map: '..........^.....11.....^^.....1.2......^.....A......12..f..^^^......1122..n...^.....A...[......2..........22..........^^^^.........]...2..2......^^....^^......112......1A.....^^^..s..12.21..n...^.^.^........',
+      ceil: '...................................................................................................2...........22..........2',
     },
     {
       id: 'speed-shift', name: 'Speed Shift', difficulty: 'Normal', speed: 340, hue: 200,
-      map: '..........^......^^......1.2......f......^.......^^.......1.2.......v.......^........^^........1..2........x........^..........^^.........1...2.........s....^...^^...1.2...A...n......^......^^......12........',
+      map: '..........^......^^......1.2......f......^.......^^.......1.2.......v.......^........^^........1..2...[......2..........22..........^^^^.........].....x........^..........^^.........1...2.........s....^...^^...1.2...A...n......^......^^......12........',
+      ceil: '.................................................................................................................2...........22..........2',
     },
     {
       id: 'spike-storm', name: 'Spike Storm', difficulty: 'Hard', speed: 440, hue: 0,
-      map: '..........^^...1^^......2^^^.....11222......^.^.^......A..A......112^^^2..v...^^^....^^^..f...1.2.3......B......^^.1^^.2^^..s...123..321..f...^^^.^^^........',
+      map: '..........^^...1^^......2^^^.....11222......^.^.^......A..A...[.....3.......33.......^^^^^^.......3....3......]...112^^^2..v...^^^....^^^..f...1.2.3......B......^^.1^^.2^^..s...123..321..f...^^^.^^^........',
+      ceil: '......................................................................3.........33.......^^^^^^.......3....3',
     },
     {
       id: 'tower-climb', name: 'Tower Climb', difficulty: 'Harder', speed: 460, hue: 190,
-      map: '..........1.2.3......^^^.....12.3.2.1......1A.1A.1A......1122.^^^.2211......s...1.2.3...3...3......f......^.^^.^^^......12..21..12......123.....B..v...^^^^..f...123321........',
+      map: '..........1.2.3......^^^.....12.3.2.1......1A.1A.1A......1122.^^^.2211......s...1.2.3...3...3...[.....3.......33.......^^^^^^.......3....3......]...f......^.^^.^^^......12..21..12......123...B..v...^^^^..f...123321........',
+      ceil: '........................................................................................................3.........33.......^^^^^^.......3....3',
     },
     {
       id: 'neon-rush', name: 'Neon Rush', difficulty: 'Insane', speed: 500, hue: 310,
-      map: '..........^.^^.^^^......A.A.A......1^^^^2......^^.1^^.2^^.3......22..22..22..x...^^^^..v...1.2.3.2.1......A^A^A......12^^^^^21......^..^..^..^..s...123.B....123.B........',
+      map: '..........^.^^.^^^......A.A.A......1^^^^2......^^.1^^.2^^.3......22..22..22..x...^^^^..v...1.2.3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...A^A^A......12^^^^^21......^..^..^..^..s...123.B....123.B........',
+      ceil: '..............................................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B',
     },
     {
       id: 'final-gauntlet', name: 'Final Gauntlet', difficulty: 'Easy Demon', speed: 540, hue: 30,
-      map: '..........^^.....1^^^^.....2^^^^^.....1.2.3^^^3.2.1......A.A.A.A..s...1.2.3..3.2.1..v...^.^^.^^^...^^^^......123.B.12B.12B..x...22^^^^^^22..v...123^^^^^^3..x...^^.^^.^^.^^......A1A1A1A........',
+      map: '..........^^.....1^^^^.....2^^^^^.....1.2.3^^^3.2.1......A.A.A.A..s...1.2.3..3.2.1..v...^.^^.^^^...^^^^...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...123.B.12B.12B..x...22^^^^^^22..v...123^^^^^^3..x...^^.^^.^^.^^......A1A1A1A........',
+      ceil: '.................................................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B',
     },
     {
       id: 'inferno-steps', name: 'Inferno Steps', difficulty: 'Medium Demon', speed: 560, hue: 15,
-      map: '..........^^^.....1^^^^.....22^^^^22......A.A.A.A......1.2.3^^^3.2.1......^^.^^.^^.^^..s...123.B.12B..x...1^^^^2......^^^^..v...A1A1A1A......22^^^^^^22........',
+      map: '..........^^^.....1^^^^.....22^^^^22......A.A.A.A......1.2.3^^^3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...^^.^^.^^.^^..s...123.B.12B..x...1^^^^2......^^^^..v...A1A1A1A......22^^^^^^22........',
+      ceil: '..............................................................................3.....33....^^^^^^^^.......3...3...3.....B..B',
     },
     {
       id: 'abyss', name: 'Abyss', difficulty: 'Hard Demon', speed: 580, hue: 260,
-      map: '..........^^^^......1^^^^^......1.2.3^^^^3.2.1......A.A.A.A.A......^^..^^^..^^^^......123.B.12B.12B..x...22^^^^^^22..v...1A1A1A1A......^^^^.^^^^..x...1.2.3^^^^^3........',
+      map: '..........^^^^......1^^^^^......1.2.3^^^^3.2.1......A.A.A.A.A......^^..^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.12B.12B..x...22^^^^^^22..v...1A1A1A1A......^^^^.^^^^..x...1.2.3^^^^^3........',
+      ceil: '..........................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B',
     },
     {
       id: 'void-runner', name: 'Void Runner', difficulty: 'Insane Demon', speed: 600, hue: 330,
-      map: '..........^^^^.^^^^......1^^^^^2^^^^^3......A.A.A.A........1.2.33^^^^33^^^^33.2.1......^^^...^^^...^^^..s...123.B.B.B..x...122^^^^^^22..v...1A1A1A1A1A..x...^^^^^..^^^^^........',
+      map: '..........^^^^.^^^^......1^^^^^2^^^^^3......A.A.A.A........1.2.33^^^^33^^^^33.2.1...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...^^^...^^^...^^^..s...123.B.B.B..x...122^^^^^^22..v...1A1A1A1A1A..x...^^^^^..^^^^^........',
+      ceil: '...........................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B',
     },
     {
       id: 'apocalypse', name: 'Apocalypse', difficulty: 'Extreme Demon', speed: 620, hue: 0,
-      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^......A.....A.....A.....A........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^......123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A......s....1.2.3......x.........^^^^^.........1.2.33^^^^^33.2.1........',
+      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^......A.....A.....A.....A........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A......s....1.2.3......x.........^^^^^.........1.2.33^^^^^33.2.1........',
+      ceil: '................................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B',
     },
   ];
   // LEVELS-END
@@ -565,6 +590,7 @@
 
   function buildLevel(lv) {
     const startX = player.x + RUNWAY;
+    let shipFrom = null;
     [...lv.map].forEach((c, i) => {
       const x = startX + i * 40;
       const blockH = { '1': 40, '2': 80, '3': 120, A: 40, B: 80 }[c];
@@ -572,6 +598,23 @@
       if (c === '^') obstacles.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - 40 });
       if (c === 'A' || c === 'B') obstacles.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - blockH - 40 });
       if (SPEED_TIERS[c]) obstacles.push({ t: 'p', tier: c, x, w: 40, h: 120, y: GROUND_Y - 120, used: false });
+      if (c === '[' || c === ']') obstacles.push({ t: 'p', tier: c, x, w: 40, h: 200, y: GROUND_Y - 200, used: false });
+      // the ceiling slab above each ship section
+      if (c === '[') shipFrom = x;
+      // ...and a strip of ground spikes along the floor (it starts 3 columns in, so there's time to take off)
+      if (c === ']' && shipFrom !== null) {
+        obstacles.push({ t: 'c', x: shipFrom, w: x + 40 - shipFrom, y: GROUND_Y - CORRIDOR - 40, h: 40 });
+        obstacles.push({ t: 'g', x: shipFrom + THORN_GAP, w: x + 40 - shipFrom - THORN_GAP, y: GROUND_Y - THORN_H, h: THORN_H });
+        shipFrom = null;
+      }
+    });
+    const ceilY = GROUND_Y - CORRIDOR;
+    [...(lv.ceil || '')].forEach((c, i) => {
+      const x = startX + i * 40;
+      const blockH = { '1': 40, '2': 80, '3': 120, A: 40, B: 80 }[c];
+      if (blockH) obstacles.push({ t: 'b', hang: true, x, w: 40, h: blockH, y: ceilY });
+      if (c === '^') obstacles.push({ t: 's', flip: true, x, w: 40, h: 40, y: ceilY });
+      if (c === 'A' || c === 'B') obstacles.push({ t: 's', flip: true, x, w: 40, h: 40, y: ceilY + blockH });
     });
     finishX = startX + (lv.map.length + 4) * 40;
     levelLength = finishX - player.x;
@@ -579,7 +622,7 @@
 
   function reset() {
     speedFlash = null;
-    player = { x: 180, y: GROUND_Y - CUBE, vy: 0, rot: 0, onGround: true, squash: 0, trail: [] };
+    player = { x: 180, y: GROUND_Y - CUBE, vy: 0, rot: 0, onGround: true, squash: 0, trail: [], ship: false };
     obstacles = [];
     particles = [];
     rings = [];
@@ -658,7 +701,7 @@
   // ---- Practice checkpoints ----
   function placeCheckpoint() {
     if (!inPractice || state !== 'playing') return;
-    checkpoints.push({ dist: distance, speed, y: player.y, vy: player.vy, onGround: player.onGround, rot: player.rot });
+    checkpoints.push({ dist: distance, speed, y: player.y, vy: player.vy, onGround: player.onGround, rot: player.rot, ship: player.ship });
     rings.push({ x: player.x + CUBE / 2, y: player.y + CUBE / 2, r: 6, v: 260, life: 0.8, color: '77,255,136' });
   }
   function removeCheckpoint() {
@@ -677,7 +720,7 @@
       finishX -= cp.dist;
       speed = cp.speed;
       for (const o of obstacles) if (o.t === 'p' && o.x + o.w / 2 <= player.x + CUBE / 2) o.used = true;
-      Object.assign(player, { y: cp.y, vy: cp.vy, onGround: cp.onGround, rot: cp.rot });
+      Object.assign(player, { y: cp.y, vy: cp.vy, onGround: cp.onGround, rot: cp.rot, ship: cp.ship });
     }
     state = 'playing';
     holdJump = false;
@@ -857,8 +900,10 @@
   const SPIKE_HB_H = 20;         // height
   const SPIKE_HB_TOP = 14;       // gap from the spike's tip down to the top of the hitbox
   function spikeBox(s) {
-    return { x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H };
+    // a ceiling spike points down, so its hitbox is measured up from its tip
+    return { x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.flip ? s.y + s.h - SPIKE_HB_TOP - SPIKE_HB_H : s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H };
   }
+  function thornBox(o) { return { x: o.x, y: o.y + o.h - THORN_HB, w: o.w, h: THORN_HB }; }
   function outerBox() { return { x: player.x, y: player.y, w: CUBE, h: CUBE }; }
   function innerBox() { return { x: player.x + INNER, y: player.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER }; }
   function rectsOverlap(a, b) {
@@ -931,9 +976,15 @@
     for (const o of obstacles) {
       if (o.t !== 'p' || o.used || o.x + o.w / 2 > player.x + CUBE / 2) continue;
       o.used = true;
-      speed = SPEED_TIERS[o.tier];
       const st = PORTAL_STYLE[o.tier];
-      speedFlash = { text: st.label + ' SPEED', color: st.color, life: 1 };
+      if (SPEED_TIERS[o.tier]) {
+        speed = SPEED_TIERS[o.tier];
+        speedFlash = { text: st.label + ' SPEED', color: st.color, life: 1 };
+      } else {
+        player.ship = st.ship;
+        if (player.ship) player.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, player.vy));
+        speedFlash = { text: st.ship ? 'SHIP — HOLD TO FLY' : 'CUBE', color: st.color, life: 1 };
+      }
       rings.push({ x: o.x + o.w / 2, y: o.y + o.h / 2, r: 10, v: 420, life: 0.9, color: hexToRgb(st.color) });
     }
     if (mode) {
@@ -944,17 +995,24 @@
       if (spawnIn <= 0) spawn();
     }
 
-    // jump (hold to keep bouncing)
-    if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; player.squash = -0.7; }
     const wasOnGround = player.onGround;
+    if (player.ship) {
+      // ship: hold to climb, let go to sink, with a speed limit both ways
+      player.vy += (holdJump ? -SHIP_LIFT : SHIP_GRAVITY) * dt;
+      player.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, player.vy));
+    } else {
+      // jump (hold to keep bouncing)
+      if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; player.squash = -0.7; }
+      player.vy += GRAVITY * dt;
+    }
 
     // vertical movement
-    player.vy += GRAVITY * dt;
     player.y += player.vy * dt;
     player.onGround = false;
 
-    // floor
+    // floor (and, for the ship, the corridor's ceiling: both can be slid along)
     if (player.y + CUBE >= GROUND_Y) { player.y = GROUND_Y - CUBE; player.vy = 0; player.onGround = true; }
+    if (player.ship && player.y <= GROUND_Y - CORRIDOR) { player.y = GROUND_Y - CORRIDOR; player.vy = Math.max(0, player.vy); }
 
     // blocks: the OUTER box lands on top; the INNER box touching a block = crash.
     // If the outer box sinks into a block's top by no more than INNER px while falling,
@@ -963,6 +1021,8 @@
       if (o.t !== 'b' || !rectsOverlap(outerBox(), o)) continue;
       if (player.vy >= 0 && player.y + CUBE - o.y <= INNER) {
         player.y = o.y - CUBE; player.vy = 0; player.onGround = true;
+      } else if (player.ship && player.vy <= 0 && o.y + o.h - player.y <= INNER) {
+        player.y = o.y + o.h; player.vy = 0; // the ship slides along a block's underside
       } else if (rectsOverlap(innerBox(), o)) {
         return die();
       }
@@ -972,6 +1032,7 @@
     const inner = innerBox();
     for (const o of obstacles) {
       if (o.t === 's' && rectsOverlap(inner, spikeBox(o))) return die();
+      if (o.t === 'g' && rectsOverlap(inner, thornBox(o))) return die();
     }
 
     // landing: squash and kick up a little dust
@@ -991,7 +1052,12 @@
     }
 
     // rotation: spin in air, snap to nearest 90° on ground
-    if (player.onGround) {
+    if (player.ship) {
+      // the ship tilts toward where it's heading; a flame trails behind it
+      const target = Math.atan2(player.vy, speed) * 0.9;
+      player.rot += (target - player.rot) * Math.min(1, dt * 18);
+      if (Math.random() < 0.6) particles.push({ x: player.x - 2, y: player.y + CUBE * 0.7, vx: -speed * 0.5 - Math.random() * 80, vy: (Math.random() - 0.5) * 60, life: 0.4, size: 3 + Math.random() * 4, g: 0, glow: true, color: ['#ffd23f', '#ff9a1f', '#fff3b0'][Math.floor(Math.random() * 3)] });
+    } else if (player.onGround) {
       const target = Math.round(player.rot / (Math.PI / 2)) * (Math.PI / 2);
       player.rot += (target - player.rot) * Math.min(1, dt * 20);
     } else {
@@ -1143,6 +1209,12 @@
   }
 
   function drawSpike(o, h) {
+    if (o.flip) { // ceiling spike: draw it upside down around its middle
+      ctx.save(); ctx.translate(0, 2 * o.y + o.h); ctx.scale(1, -1);
+      drawSpike({ ...o, flip: false }, h);
+      ctx.restore();
+      return;
+    }
     const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
     g.addColorStop(0, `hsl(${h}, 30%, 82%)`);
     g.addColorStop(0.35, `hsl(${h}, 35%, 35%)`);
@@ -1160,6 +1232,39 @@
     ctx.closePath();
     ctx.fillStyle = 'rgba(255,255,255,0.13)';
     ctx.fill();
+  }
+
+  // the ceiling over a ship section: a dark slab reaching up off the top of the screen
+  function drawCeiling(o, h, accent) {
+    const bottom = o.y + o.h;
+    const g = ctx.createLinearGradient(0, bottom - 120, 0, bottom);
+    g.addColorStop(0, `hsl(${h}, 50%, 6%)`);
+    g.addColorStop(1, `hsl(${h}, 45%, 18%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(o.x, -20, o.w, bottom + 20);
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.3; ctx.fillStyle = accent; ctx.fillRect(o.x, bottom - 6, o.w, 6); ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.moveTo(o.x, bottom); ctx.lineTo(o.x + o.w, bottom); ctx.stroke();
+  }
+
+  // ground spikes: a black strip of jagged little spikes with a white outline
+  function drawThorns(o) {
+    const x0 = Math.max(o.x, -20), x1 = Math.min(o.x + o.w, W + 20), base = o.y + o.h;
+    if (x1 <= x0) return;
+    const STEP = 7, k0 = Math.floor((x0 - o.x) / STEP), k1 = Math.ceil((x1 - o.x) / STEP);
+    const peak = k => { const r = Math.sin((k + 1) * 12.9898) * 43758.5453; return 6 + (r - Math.floor(r)) * (o.h - 6); };
+    ctx.beginPath();
+    ctx.moveTo(o.x + k0 * STEP, base);
+    for (let k = k0; k <= k1; k++) {
+      const x = Math.min(o.x + o.w, o.x + k * STEP);
+      ctx.lineTo(x, base - (k % 2 ? peak(k) : peak(k) * 0.35));
+    }
+    ctx.lineTo(Math.min(o.x + o.w, o.x + k1 * STEP), base);
+    ctx.closePath();
+    ctx.fillStyle = '#000'; ctx.fill();
+    ctx.lineJoin = 'miter';
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 4; ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6; ctx.stroke();
   }
 
   function drawFinish(accent) {
@@ -1203,6 +1308,7 @@
     ctx.ellipse(cx, surface + 2, CUBE * 0.6 * near, 5 * near, 0, 0, TAU);
     ctx.fill();
 
+    if (player.ship) return drawShip();
     // the cube: squash & stretch around its bottom (visual only — the hitbox doesn't change)
     const sq = player.squash;
     ctx.save();
@@ -1235,6 +1341,38 @@
     ctx.restore();
   }
 
+  // the ship: a small copy of the cube riding a winged hull (the hitbox is still the 40x40 box)
+  function drawShip() {
+    ctx.save();
+    ctx.translate(player.x + CUBE / 2, player.y + CUBE / 2);
+    ctx.rotate(player.rot);
+    ctx.shadowColor = 'rgba(255,190,60,0.8)'; ctx.shadowBlur = 16;
+    // pilot cube
+    const body = ctx.createLinearGradient(-10, -20, 10, 0);
+    body.addColorStop(0, '#ffe56e'); body.addColorStop(1, '#ff961c');
+    ctx.fillStyle = body;
+    rrect(-9, -19, 20, 20, 3); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#5a3500'; ctx.lineWidth = 2;
+    rrect(-8, -18, 18, 18, 3); ctx.stroke();
+    ctx.fillStyle = '#2b1a00';
+    ctx.fillRect(-4, -13, 3, 4); ctx.fillRect(4, -13, 3, 4); ctx.fillRect(-3, -6, 9, 2);
+    // hull
+    const hull = ctx.createLinearGradient(0, -2, 0, 16);
+    hull.addColorStop(0, '#4dc3ff'); hull.addColorStop(1, '#1a4f8a');
+    ctx.fillStyle = hull;
+    ctx.beginPath();
+    ctx.moveTo(-22, -2); ctx.lineTo(16, -2); ctx.lineTo(24, 6); ctx.lineTo(14, 16); ctx.lineTo(-18, 16); ctx.lineTo(-22, 8);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#0b2440'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-18, 2); ctx.lineTo(15, 2); ctx.stroke();
+    // wing fin
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.moveTo(-20, -2); ctx.lineTo(-24, -12); ctx.lineTo(-12, -2); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
   // a glowing oval gate with chevrons (← for half speed, → ×N for faster) and its label
   function drawPortal(o) {
     const st = PORTAL_STYLE[o.tier], cx = o.x + o.w / 2, cy = o.y + o.h / 2, rx = 17, ry = o.h / 2;
@@ -1261,6 +1399,14 @@
     for (let i = 0; i < n; i++) {
       const y = top + i * gap, d = st.back ? -5 : 5;
       ctx.beginPath(); ctx.moveTo(cx - d, y - 5); ctx.lineTo(cx + d, y); ctx.lineTo(cx - d, y + 5); ctx.stroke();
+    }
+    // ship / cube portals show a little icon of what you turn into
+    if (!n) {
+      ctx.fillStyle = '#fff';
+      if (st.ship) {
+        ctx.beginPath(); ctx.moveTo(cx - 9, cy + 2); ctx.lineTo(cx + 7, cy + 2); ctx.lineTo(cx + 11, cy + 6); ctx.lineTo(cx + 6, cy + 10); ctx.lineTo(cx - 8, cy + 10); ctx.closePath(); ctx.fill();
+        ctx.fillRect(cx - 4, cy - 6, 8, 8);
+      } else ctx.fillRect(cx - 7, cy - 7, 14, 14);
     }
     // label above
     ctx.font = '800 16px -apple-system, system-ui, sans-serif';
@@ -1304,9 +1450,13 @@
     drawGround(h, accent, beat);
     if (mode && finishX < W + 80) drawFinish(accent);
 
+    for (const o of obstacles) { // ceilings and ground spikes go underneath everything else
+      if (o.x > W + 60 || o.x + o.w < -60) continue;
+      if (o.t === 'c') drawCeiling(o, h, accent); else if (o.t === 'g') drawThorns(o);
+    }
     for (const o of obstacles) {
-      if (o.x > W + 60 || o.x + o.w < -60) continue; // off screen
-      if (o.t === 'b') drawBlock(o, h, accent); else if (o.t === 's') drawSpike(o, h); else drawPortal(o);
+      if (o.x > W + 60 || o.x + o.w < -60 || o.t === 'c' || o.t === 'g') continue; // off screen / drawn above
+      if (o.t === 'b') drawBlock(o, h, accent); else if (o.t === 's') drawSpike(o, h); else if (o.t === 'c') drawCeiling(o, h, accent); else drawPortal(o);
     }
 
     // particles (glowing ones are added on top of what's below)
@@ -1405,10 +1555,11 @@
         ctx.fillRect(o.x, o.y, o.w, o.h);
         ctx.strokeRect(o.x, o.y, o.w, o.h);
         // landing zone: outer box bottom anywhere in here while falling = snap up and land
+        // (a ship can also slide along the underside of a block)
         ctx.fillStyle = 'rgba(77,255,136,0.45)';
-        ctx.fillRect(o.x, o.y, o.w, INNER);
-      } else if (o.t === 's') {
-        const b = spikeBox(o);
+        if (o.hang) ctx.fillRect(o.x, o.y + o.h - INNER, o.w, INNER); else ctx.fillRect(o.x, o.y, o.w, INNER);
+      } else if (o.t === 's' || o.t === 'g') {
+        const b = o.t === 's' ? spikeBox(o) : thornBox(o);
         ctx.fillStyle = 'rgba(255,77,77,0.45)';
         ctx.fillRect(b.x, b.y, b.w, b.h);
         ctx.strokeStyle = '#ff4d4d';
