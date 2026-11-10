@@ -183,8 +183,8 @@
   const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
   $('menuHint').textContent = isTouch
-    ? 'Pick a level · tap to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · practice mode lets you place checkpoints'
-    : `Pick a level (keys 1–9, 0 and −, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · P pause · H hitboxes · in practice: C checkpoint, X undo`;
+    ? 'Pick a level · tap to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · yellow portals turn you upside down, blue ones turn you back · practice mode lets you place checkpoints'
+    : `Pick a level (keys 1–9, 0 and −, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · yellow portals flip gravity, blue ones set it back · P pause · H hitboxes · in practice: C checkpoint, X undo`;
   $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
@@ -207,6 +207,9 @@
   const BALL_GRAVITY = 3000;     // px/s^2, pulling toward the floor or the ceiling
   const BALL_KICK = 300;         // px/s push toward the new side when gravity flips
   const BALL_MAX = 900;          // fastest fall, px/s
+  const SLAB_H = 20;             // floating slab thickness
+  const SLAB_LOW = 70;           // height of a low slab's top above the floor (a cube fits underneath)
+  const SLAB_HIGH = 140;         // height of a high slab's top
   const THORN_H = 18;            // ground spikes lining the floor of every ship section: drawn height
   const THORN_HB = 14;           // ...and hitbox height (touching it with the inner box = crash)
   const THORN_GAP = 120;         // they start this far past the SHIP portal
@@ -274,8 +277,13 @@
   // Each character in a map is one 40px column:
   //   .  empty      ^  spike      1 2 3  block 1, 2 or 3 cubes tall
   //   A  1-tall block with a spike on top      B  2-tall block with a spike on top
+  //   floating slabs (run under them or jump onto them):
+  //   _  low slab (top 70 up)    +  low slab with a spike on the ground under it    =  high slab (top 140 up)
   //   speed portals:  s = 0.5x   n = 1x   f = 2x   v = 3x   x = 4x
   //   mode portals:   [ = SHIP (hold to fly)   ( = BALL (tap to flip gravity)   ] = back to CUBE
+  //   gravity portals: u = yellow, upside down (falls toward the ceiling)   d = blue, normal gravity
+  //   (a u ... d stretch outside a ship/ball section gets a ceiling to run along; going through a
+  //    SHIP, BALL or CUBE portal always sets gravity back to normal)
   // A level can also have a `ceil` string, lined up with `map`, for things hanging from the ship
   // corridor's ceiling (ship and ball sections): 1 2 3 = hanging block, ^ = spike pointing down, A B = hanging block with a spike under it.
   // Every level has been checked with a solver to make sure it can be beaten.
@@ -293,63 +301,65 @@
     '[': { label: 'SHIP', color: '#ffd23f', arrows: 0, ship: true },
     '(': { label: 'BALL', color: '#ff5c5c', arrows: 0, ball: true },
     ']': { label: 'CUBE', color: '#4dff88', arrows: 0 },
+    u: { label: '', color: '#ffd23f', arrows: 0, grav: -1 },
+    d: { label: '', color: '#4dc3ff', arrows: 0, grav: 1 },
   };
   // LEVELS-START
   const LEVELS = [
     {
       id: 'first-steps', name: 'First Steps', difficulty: 'Easy', speed: 340, hue: 150,
-      map: '..........^.......^.......^^.......1.......1......^......11......^^...[......2..........22..........^^^^.........]...1...1..f...^...^......111......^^...(.....^^^.......................22.................]........1......^^^..n...11.1......^.^........',
-      ceil: '.................................................................................2...........22..........2..................................................................^^^......................22',
+      map: '..........^.......^...u...................................d............^^.......1.......1...__+++__......^......__+++__......^......11......^^...[......2..........22..........^^^^.........]...1...1..f...^...^......111......^^...(.....^^^.......................22.................]........1......^^^..n...11.1......^.^........',
+      ceil: '..............................^.......^^.......1......^.....................................................................................................2...........22..........2..................................................................^^^......................22',
     },
     {
       id: 'block-party', name: 'Block Party', difficulty: 'Normal', speed: 380, hue: 270,
-      map: '..........^.....11.....^^.....1.2......^.....A......12..f..^^^......1122..n...^.....A...[......2..........22..........^^^^.........]...2..2......^^....^^......112...(.....^^^.......................22.................]........1A.....^^^..s..12.21..n...^.^.^........',
-      ceil: '...................................................................................................2...........22..........2............................................................^^^......................22',
+      map: '..........^.....11.....^^.....1.2...u...................................d...........^.....A......12..f..^^^...__+++__......^......__+++__......1122..n...^.....A...[......2..........22..........^^^^.........]...2..2......^^....^^......112...(.....^^^.......................22.................]........1A.....^^^..s..12.21..n...^.^.^........',
+      ceil: '............................................^.......^^.......1......^.........................................................................................................2...........22..........2............................................................^^^......................22',
     },
     {
       id: 'speed-shift', name: 'Speed Shift', difficulty: 'Normal', speed: 340, hue: 200,
-      map: '..........^......^^......1.2......f......^.......^^.......1.2.......v.......^........^^........1..2...[......2..........22..........^^^^.........].....x........^..........^^.........1...2...(.....^^^.......................22.................]...........s....^...^^...1.2...A...n......^......^^......12........',
-      ceil: '.................................................................................................................2...........22..........2.......................................................................^^^......................22',
+      map: '..........^......^^......1.2...u...................................d...........f......^.......^^.......1.2...__+++__......^......__+++__.......v.......^........^^........1..2...[......2..........22..........^^^^.........].....x........^..........^^.........1...2...(.....^^^.......................22.................]...........s....^...^^...1.2...A...n......^......^^......12........',
+      ceil: '.......................................^.......^^.......1......^............................................................................................................................2...........22..........2.......................................................................^^^......................22',
     },
     {
       id: 'spike-storm', name: 'Spike Storm', difficulty: 'Hard', speed: 440, hue: 0,
-      map: '..........^^...1^^......2^^^.....11222......^.^.^......A..A...[.....3.......33.......^^^^^^.......3....3......]...112^^^2..v...^^^....^^^..f...1.2.3......B...(....^^^^....................33...................3..............]........^^.1^^.2^^..s...123..321..f...^^^.^^^........',
-      ceil: '......................................................................3.........33.......^^^^^^.......3....3...................................................................^^^^..................^^^.................3',
+      map: '..........^^...1^^...u...................................d...........2^^^.....11222..._++++_....=.=....__+++=+++__......^.^.^......A..A...[.....3.......33.......^^^^^^.......3....3......]...112^^^2..v...^^^....^^^..f...1.2.3......B...(....^^^^....................33...................3..............]........^^.1^^.2^^..s...123..321..f...^^^.^^^........',
+      ceil: '.............................^^.....1.2.....^^^.....11............................................................................................3.........33.......^^^^^^.......3....3...................................................................^^^^..................^^^.................3',
     },
     {
       id: 'tower-climb', name: 'Tower Climb', difficulty: 'Harder', speed: 460, hue: 190,
-      map: '..........1.2.3......^^^.....12.3.2.1......1A.1A.1A......1122.^^^.2211......s...1.2.3...3...3...[.....3.......33.......^^^^^^.......3....3......]...f......^.^^.^^^......12..21..12...(....^^^^....................33...................3..............]........123...B..v...^^^^..f...123321........',
-      ceil: '........................................................................................................3.........33.......^^^^^^.......3....3.........................................................^^^^..................^^^.................3',
+      map: '..........1.2.3...u...................................d...........^^^.....12.3.2.1......1A.1A.1A..._++++_....=.=....__+++=+++__......1122.^^^.2211......s...1.2.3...3...3...[.....3.......33.......^^^^^^.......3....3......]...f......^.^^.^^^......12..21..12...(....^^^^....................33...................3..............]........123...B..v...^^^^..f...123321........',
+      ceil: '..........................^^.....1.2.....^^^.....11.................................................................................................................................3.........33.......^^^^^^.......3....3.........................................................^^^^..................^^^.................3',
     },
     {
       id: 'neon-rush', name: 'Neon Rush', difficulty: 'Insane', speed: 500, hue: 310,
-      map: '..........^.^^.^^^......A.A.A......1^^^^2......^^.1^^.2^^.3......22..22..22..x...^^^^..v...1.2.3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...A^A^A......12^^^^^21...(....^^^^..................B...............^^^^^................33................]........^..^..^..^..s...123.B....123.B........',
-      ceil: '..............................................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B...............................................^^^^...............B...................33................^^^^',
+      map: '..........^.^^.^^^......A.A.A...u....................................d...........1^^^^2......^^.1^^.2^^.3..._+++=+++=+++_.....1_++=++_......22..22..22..x...^^^^..v...1.2.3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...A^A^A......12^^^^^21...(....^^^^..................B...............^^^^^................33................]........^..^..^..^..s...123.B....123.B........',
+      ceil: '........................................^^^...1^^2.....A..A.....12.......................................................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B...............................................^^^^...............B...................33................^^^^',
     },
     {
       id: 'final-gauntlet', name: 'Final Gauntlet', difficulty: 'Easy Demon', speed: 540, hue: 30,
-      map: '..........^^.....1^^^^.....2^^^^^.....1.2.3^^^3.2.1......A.A.A.A..s...1.2.3..3.2.1..v...^.^^.^^^...^^^^...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...123.B.12B.12B..x...22^^^^^^22..v...123^^^^^^3..x...^^.^^.^^.^^...(....^^^^..................B...............^^^^^................33................]........A1A1A1A........',
-      ceil: '.................................................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B.........................................................................................^^^^...............B...................33................^^^^',
+      map: '..........^^.....1^^^^.....2^^^^^.....1.2.3^^^3.2.1...u....................................d...........A.A.A.A..s...1.2.3..3.2.1..v...^.^^.^^^...^^^^...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...123.B.12B.12B..x...22^^^^^^22..v...123^^^^^^3..x...^^.^^.^^.^^...(....^^^^..................B...............^^^^^................33................]..._+++=+++=+++_.....1_++=++_........A1A1A1A........',
+      ceil: '..............................................................^^^...1^^2.....A..A.....12.......................................................................3.....33....^^^^^^^^.......3...3...3.....B..B.........................................................................................^^^^...............B...................33................^^^^',
     },
     {
       id: 'inferno-steps', name: 'Inferno Steps', difficulty: 'Medium Demon', speed: 560, hue: 15,
-      map: '..........^^^.....1^^^^.....22^^^^22......A.A.A.A......1.2.3^^^3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...^^.^^.^^.^^..s...123.B.12B..x...1^^^^2...(....^^^^..................B...............^^^^^................33................]........^^^^..v...A1A1A1A......22^^^^^^22........',
-      ceil: '..............................................................................3.....33....^^^^^^^^.......3...3...3.....B..B.................................................................^^^^...............B...................33................^^^^',
+      map: '..........^^^.....1^^^^.....22^^^^22...u....................................d...........A.A.A.A..._+++=+++=+++_.....1_++=++_......1.2.3^^^3.2.1...[....3.....33.....^^^^^^^^.....3...3...3......B..B......]...^^.^^.^^.^^..s...123.B.12B..x...1^^^^2...(....^^^^..................B...............^^^^^................33................]........^^^^..v...A1A1A1A......22^^^^^^22........',
+      ceil: '...............................................^^^...1^^2.....A..A.....12................................................................................3.....33....^^^^^^^^.......3...3...3.....B..B.................................................................^^^^...............B...................33................^^^^',
     },
     {
       id: 'abyss', name: 'Abyss', difficulty: 'Hard Demon', speed: 580, hue: 260,
-      map: '..........^^^^......1^^^^^......1.2.3^^^^3.2.1......A.A.A.A.A......^^..^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.12B.12B..x...22^^^^^^22..v...1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........^^^^.^^^^..x...1.2.3^^^^^3........',
-      ceil: '..........................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B..................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
+      map: '..........^^^^......1^^^^^...u................................................d...........1.2.3^^^^3.2.1..._+++=+++=+++_......2=++=++=......_+++++_......A.A.A.A.A......^^..^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.12B.12B..x...22^^^^^^22..v...1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........^^^^.^^^^..x...1.2.3^^^^^3........',
+      ceil: '.....................................^^^^......1^^^2......A.A.A......12^^21....................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B..................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
     },
     {
       id: 'void-runner', name: 'Void Runner', difficulty: 'Insane Demon', speed: 600, hue: 330,
-      map: '..........^^^^.^^^^......1^^^^^2^^^^^3......A.A.A.A........1.2.33^^^^33^^^^33.2.1...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...^^^...^^^...^^^..s...123.B.B.B..x...122^^^^^^22..v...1A1A1A1A1A..x...^^^^^..^^^^^...(....^^^^................B.B...............^^^^^.................3.............^^^..............]..........',
-      ceil: '...........................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B........................................................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
+      map: '..........^^^^.^^^^...u................................................d...........1^^^^^2^^^^^3......A.A.A.A..._+++=+++=+++_......2=++=++=......_+++++_........1.2.33^^^^33^^^^33.2.1...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...^^^...^^^...^^^..s...123.B.B.B..x...122^^^^^^22..v...1A1A1A1A1A..x...^^^^^..^^^^^...(....^^^^................B.B...............^^^^^.................3.............^^^..............]..........',
+      ceil: '..............................^^^^......1^^^2......A.A.A......12^^21............................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B........................................................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
     },
     {
       id: 'apocalypse', name: 'Apocalypse', difficulty: 'Extreme Demon', speed: 620, hue: 0,
-      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^......A.....A.....A.....A........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........s....1.2.3......x.........^^^^^.........1.2.33^^^^^33.2.1........',
-      ceil: '................................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B.....................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
+      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^...u................................................d...........A.....A.....A.....A..._+++=+++=+++_......2=++=++=......_+++++_........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........s....1.2.3......x.........^^^^^.........1.2.33^^^^^33.2.1........',
+      ceil: '..................................................^^^^......1^^^2......A.A.A......12^^21.............................................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B.....................................................................^^^^...............B.B.................^^^^^.............3...............^^^',
     },
   ];
   // LEVELS-END
@@ -596,14 +606,22 @@
 
   function buildLevel(lv) {
     const startX = player.x + RUNWAY;
-    let shipFrom = null, shipKind = '';
+    let shipFrom = null, shipKind = '', gravFrom = null;
     [...lv.map].forEach((c, i) => {
       const x = startX + i * 40;
       const blockH = { '1': 40, '2': 80, '3': 120, A: 40, B: 80 }[c];
       if (blockH) obstacles.push({ t: 'b', x, w: 40, h: blockH, y: GROUND_Y - blockH });
+      const slabTop = { _: SLAB_LOW, '+': SLAB_LOW, '=': SLAB_HIGH }[c];
+      if (slabTop) obstacles.push({ t: 'b', slab: true, x, w: 40, h: SLAB_H, y: GROUND_Y - slabTop });
+      if (c === '+') obstacles.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - 40 });
       if (c === '^') obstacles.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - 40 });
       if (c === 'A' || c === 'B') obstacles.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - blockH - 40 });
       if (SPEED_TIERS[c]) obstacles.push({ t: 'p', tier: c, x, w: 40, h: 120, y: GROUND_Y - 120, used: false });
+      if (c === 'u') obstacles.push({ t: 'p', tier: c, x, w: 40, h: 140, y: GROUND_Y - 140, used: false });
+      if (c === 'd') obstacles.push({ t: 'p', tier: c, x, w: 40, h: 140, y: GROUND_Y - CORRIDOR, used: false });
+      // an upside-down stretch outside a ship/ball section gets its own ceiling
+      if (c === 'u' && shipFrom === null && gravFrom === null) gravFrom = x;
+      if (c === 'd' && gravFrom !== null) { obstacles.push({ t: 'c', x: gravFrom, w: x + 40 - gravFrom, y: GROUND_Y - CORRIDOR - 40, h: 40 }); gravFrom = null; }
       if (c === '[' || c === '(' || c === ']') obstacles.push({ t: 'p', tier: c, x, w: 40, h: 200, y: GROUND_Y - 200, used: false });
       // the ceiling slab above each ship or ball section
       if (c === '[' || c === '(') { shipFrom = x; shipKind = c; }
@@ -986,6 +1004,9 @@
       if (SPEED_TIERS[o.tier]) {
         speed = SPEED_TIERS[o.tier];
         speedFlash = { text: st.label + ' SPEED', color: st.color, life: 1 };
+      } else if (st.grav) {
+        if (player.grav !== st.grav) { player.grav = st.grav; player.onGround = false; }
+        speedFlash = { text: st.grav < 0 ? 'GRAVITY FLIPPED' : 'GRAVITY NORMAL', color: st.color, life: 1 };
       } else {
         player.ship = !!st.ship; player.ball = !!st.ball; player.grav = 1;
         if (player.ship) player.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, player.vy));
@@ -1003,8 +1024,8 @@
 
     const wasOnGround = player.onGround;
     if (player.ship) {
-      // ship: hold to climb, let go to sink, with a speed limit both ways
-      player.vy += (holdJump ? -SHIP_LIFT : SHIP_GRAVITY) * dt;
+      // ship: hold to climb, let go to sink, with a speed limit both ways (both flip when upside down)
+      player.vy += (holdJump ? -SHIP_LIFT : SHIP_GRAVITY) * player.grav * dt;
       player.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, player.vy));
     } else if (player.ball) {
       // ball: tap while touching a surface to flip gravity
@@ -1012,18 +1033,19 @@
       player.vy = Math.max(-BALL_MAX, Math.min(BALL_MAX, player.vy + BALL_GRAVITY * player.grav * dt));
     } else {
       // jump (hold to keep bouncing)
-      if (holdJump && player.onGround) { player.vy = JUMP_V; player.onGround = false; player.squash = -0.7; }
-      player.vy += GRAVITY * dt;
+      // (upside down, the cube falls toward the ceiling and jumps down)
+      if (holdJump && player.onGround) { player.vy = JUMP_V * player.grav; player.onGround = false; player.squash = -0.7; }
+      player.vy += GRAVITY * player.grav * dt;
     }
 
     // vertical movement
     player.y += player.vy * dt;
     player.onGround = false;
 
-    // floor (and, for the ship, the corridor's ceiling: both can be slid along)
-    // (an upside-down ball only counts as "on a surface" on the ceiling or under a block)
+    // floor, and the corridor's ceiling (ship, ball, or anything upside down): both can be slid along.
+    // Upside down, you only count as "on a surface" on the ceiling or under a block.
     if (player.y + CUBE >= GROUND_Y) { player.y = GROUND_Y - CUBE; player.vy = 0; player.onGround = player.grav > 0; }
-    if ((player.ship || player.ball) && player.y <= GROUND_Y - CORRIDOR) {
+    if ((player.ship || player.ball || player.grav < 0) && player.y <= GROUND_Y - CORRIDOR) {
       player.y = GROUND_Y - CORRIDOR; player.vy = Math.max(0, player.vy);
       if (player.grav < 0) player.onGround = true;
     }
@@ -1035,8 +1057,8 @@
       if (o.t !== 'b' || !rectsOverlap(outerBox(), o)) continue;
       if (player.vy >= 0 && player.y + CUBE - o.y <= INNER) {
         player.y = o.y - CUBE; player.vy = 0; player.onGround = player.grav > 0;
-      } else if ((player.ship || player.ball) && player.vy <= 0 && o.y + o.h - player.y <= INNER) {
-        player.y = o.y + o.h; player.vy = 0; // the ship and ball can slide along a block's underside
+      } else if ((player.ship || player.ball || player.grav < 0) && player.vy <= 0 && o.y + o.h - player.y <= INNER) {
+        player.y = o.y + o.h; player.vy = 0; // the ship, ball and upside-down cube can slide along a block's underside
         if (player.grav < 0) player.onGround = true;
       } else if (rectsOverlap(innerBox(), o)) {
         return die();
@@ -1078,7 +1100,7 @@
       const target = Math.round(player.rot / (Math.PI / 2)) * (Math.PI / 2);
       player.rot += (target - player.rot) * Math.min(1, dt * 20);
     } else {
-      player.rot += dt * Math.PI / AIR_TIME; // half a turn per jump
+      player.rot += player.grav * dt * Math.PI / AIR_TIME; // half a turn per jump
       // sparkles while in the air
       if (Math.random() < 0.3) particles.push({ x: player.x + 6, y: player.y + CUBE / 2 + (Math.random() - 0.5) * 24, vx: -speed * 0.4, vy: (Math.random() - 0.5) * 40, life: 0.45, size: 2 + Math.random() * 3, g: 0, glow: true, color: '#ffcf4d' });
     }
@@ -1225,6 +1247,25 @@
     ctx.fillRect(o.x + 3, o.y + 3, o.w - 6, 2);
   }
 
+  // floating slab: dark navy-to-black panel with a crisp white outline (neighbouring slabs join up)
+  function drawSlab(o) {
+    const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+    g.addColorStop(0, '#000');
+    g.addColorStop(1, '#0d2a6b');
+    ctx.fillStyle = g;
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    const left = !obstacles.some(n => n.slab && n.y === o.y && Math.abs(n.x + n.w - o.x) < 1);
+    const right = !obstacles.some(n => n.slab && n.y === o.y && Math.abs(n.x - (o.x + o.w)) < 1);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(o.x, o.y + 1); ctx.lineTo(o.x + o.w, o.y + 1);
+    ctx.moveTo(o.x, o.y + o.h - 1); ctx.lineTo(o.x + o.w, o.y + o.h - 1);
+    if (left) { ctx.moveTo(o.x + 1, o.y); ctx.lineTo(o.x + 1, o.y + o.h); }
+    if (right) { ctx.moveTo(o.x + o.w - 1, o.y); ctx.lineTo(o.x + o.w - 1, o.y + o.h); }
+    ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  }
+
   function drawSpike(o, h) {
     if (o.flip) { // ceiling spike: draw it upside down around its middle
       ctx.save(); ctx.translate(0, 2 * o.y + o.h); ctx.scale(1, -1);
@@ -1318,7 +1359,7 @@
     ctx.globalAlpha = 1;
 
     // soft shadow on whatever is underneath (shrinks as the cube rises)
-    if (player.ball && player.grav < 0) return drawBall(); // no floor shadow while rolling on the ceiling
+    if (player.grav < 0) return player.ship ? drawShip() : player.ball ? drawBall() : drawCubeBody(); // no floor shadow upside down
     let surface = GROUND_Y;
     for (const o of obstacles) if (o.t === 'b' && o.x < player.x + CUBE && o.x + o.w > player.x && o.y >= player.y + CUBE - 2) surface = Math.min(surface, o.y);
     const near = Math.max(0.2, 1 - Math.max(0, surface - (player.y + CUBE)) / 150);
@@ -1329,12 +1370,17 @@
 
     if (player.ship) return drawShip();
     if (player.ball) return drawBall();
-    // the cube: squash & stretch around its bottom (visual only — the hitbox doesn't change)
+    drawCubeBody();
+  }
+
+  function drawCubeBody() {
+    // the cube: squash & stretch around the side it stands on (visual only — the hitbox doesn't change)
+    const cx = player.x + CUBE / 2, g = player.grav;
     const sq = player.squash;
     ctx.save();
-    ctx.translate(cx, player.y + CUBE);
+    ctx.translate(cx, g > 0 ? player.y + CUBE : player.y);
     ctx.scale(1 + 0.18 * sq, 1 - 0.18 * sq);
-    ctx.translate(0, -CUBE / 2);
+    ctx.translate(0, -g * CUBE / 2);
     ctx.rotate(player.rot);
     const half = CUBE / 2;
     ctx.shadowColor = 'rgba(255,190,60,0.8)';
@@ -1422,8 +1468,47 @@
   }
 
   // a glowing oval gate with chevrons (← for half speed, → ×N for faster) and its label
+  // gravity portal: a glowing ring with a row of black blocky teeth down its right side,
+  // and an arrow showing which way gravity will point (yellow = up, blue = down)
+  function drawGravityPortal(o, st) {
+    const cx = o.x + o.w / 2, cy = o.y + o.h / 2, rx = 15, ry = o.h / 2 - 2;
+    const pulse = 0.5 + 0.5 * Math.sin(clock * 6 + o.x * 0.01);
+    ctx.save();
+    ctx.globalAlpha = o.used ? 0.35 : 1;
+    // teeth: blocks sticking out of the back of the ring, longest in the middle
+    ctx.fillStyle = '#000';
+    const N = 13;
+    for (let i = 0; i < N; i++) {
+      const a = -Math.PI / 2 + (i + 0.5) / N * Math.PI;          // right half of the ellipse, top to bottom
+      const px = cx + Math.cos(a) * rx, py = cy + Math.sin(a) * ry;
+      const len = 8 + 9 * Math.cos(a) + (i % 2) * 3;
+      ctx.fillRect(px - 2, py - 4.5, len + 2, 9);
+    }
+    // inner glow
+    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, ry);
+    g.addColorStop(0, st.color + '50'); g.addColorStop(1, st.color + '08');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU); ctx.fill();
+    // the ring
+    ctx.shadowColor = st.color; ctx.shadowBlur = 14 + 8 * pulse;
+    ctx.strokeStyle = st.color; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(cx - 1, cy, rx - 3, ry - 3, 0, 0, TAU); ctx.stroke();
+    // arrow
+    const d = st.grav; // -1 points up, 1 points down
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 14 * d); ctx.lineTo(cx, cy + 14 * d);
+    ctx.moveTo(cx - 6, cy + 7 * d); ctx.lineTo(cx, cy + 14 * d); ctx.lineTo(cx + 6, cy + 7 * d);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawPortal(o) {
     const st = PORTAL_STYLE[o.tier], cx = o.x + o.w / 2, cy = o.y + o.h / 2, rx = 17, ry = o.h / 2;
+    if (st.grav) return drawGravityPortal(o, st);
     const pulse = 0.5 + 0.5 * Math.sin(clock * 6 + o.x * 0.01);
     ctx.save();
     ctx.globalAlpha = o.used ? 0.35 : 1;
@@ -1505,7 +1590,8 @@
     }
     for (const o of obstacles) {
       if (o.x > W + 60 || o.x + o.w < -60 || o.t === 'c' || o.t === 'g') continue; // off screen / drawn above
-      if (o.t === 'b') drawBlock(o, h, accent); else if (o.t === 's') drawSpike(o, h); else if (o.t === 'c') drawCeiling(o, h, accent); else drawPortal(o);
+      if (o.t === 'b' && o.slab) drawSlab(o);
+      else if (o.t === 'b') drawBlock(o, h, accent); else if (o.t === 's') drawSpike(o, h); else if (o.t === 'c') drawCeiling(o, h, accent); else drawPortal(o);
     }
 
     // particles (glowing ones are added on top of what's below)

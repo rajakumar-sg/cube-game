@@ -13,6 +13,7 @@ const CUBE = num('CUBE'), INNER = num('INNER'), GRAVITY = num('GRAVITY'), JUMP_V
 const SPIKE_HB_W = num('SPIKE_HB_W'), SPIKE_HB_H = num('SPIKE_HB_H'), SPIKE_HB_TOP = num('SPIKE_HB_TOP'), RUNWAY = num('RUNWAY');
 const SHIP_GRAVITY = num('SHIP_GRAVITY'), SHIP_LIFT = num('SHIP_LIFT'), SHIP_MAX = num('SHIP_MAX'), CORRIDOR = num('CORRIDOR');
 const THORN_HB = num('THORN_HB'), THORN_GAP = num('THORN_GAP');
+const SLAB_H = num('SLAB_H'), SLAB_LOW = num('SLAB_LOW'), SLAB_HIGH = num('SLAB_HIGH');
 const BALL_GRAVITY = num('BALL_GRAVITY'), BALL_KICK = num('BALL_KICK'), BALL_MAX = num('BALL_MAX');
 const GROUND_Y = 420, PX = 180, DT = 1 / 120;
 
@@ -28,9 +29,12 @@ function build(map, ceil = '') {
   [...map].forEach((c, i) => {
     const x = startX + i * 40, h = { '1': 40, '2': 80, '3': 120, A: 40, B: 80 }[c];
     if (h) obs.push({ t: 'b', x, w: 40, h, y: GROUND_Y - h });
-    if (c === '^') obs.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - 40 });
+    const slab = { _: SLAB_LOW, '+': SLAB_LOW, '=': SLAB_HIGH }[c];
+    if (slab) obs.push({ t: 'b', x, w: 40, h: SLAB_H, y: GROUND_Y - slab });
+    if (c === '^' || c === '+') obs.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - 40 });
     if (c === 'A' || c === 'B') obs.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - h - 40 });
     if (SPEED_TIERS[c]) portals.push({ x, speed: SPEED_TIERS[c] });
+    if (c === 'u' || c === 'd') portals.push({ x, grav: c === 'u' ? -1 : 1 });
     if (c === '[' || c === '(' || c === ']') portals.push({ x, mode: { '[': 'ship', '(': 'ball', ']': 'cube' }[c] });
     if (c === '[' || c === '(') { shipFrom = x; shipKind = c; }  // ground spikes along each ship section's floor
     if (c === ']' && shipFrom !== null && shipKind === '[') { obs.push({ t: 'g', x: shipFrom + THORN_GAP, w: x + 40 - shipFrom - THORN_GAP, y: GROUND_Y - THORN_HB, h: THORN_HB }); }
@@ -42,25 +46,25 @@ const ov = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.
 const sbox = s => ({ x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.flip ? s.y + s.h - SPIKE_HB_TOP - SPIKE_HB_H : s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H });
 
 // one physics step of the game's update() in mode m ('cube' | 'ship' | 'ball'); returns null on crash.
-// p.gr is the ball's gravity direction (1 = down, -1 = up); it's always 1 outside ball mode.
+// p.gr is the gravity direction (1 = down, -1 = up), flipped by the ball or by gravity portals.
 function phys(p, off, hold, obs, m) {
   p = { ...p };
   const ship = m === 'ship', ball = m === 'ball';
-  if (ship) p.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, p.vy + (hold ? -SHIP_LIFT : SHIP_GRAVITY) * DT));
+  if (ship) p.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, p.vy + (hold ? -SHIP_LIFT : SHIP_GRAVITY) * p.gr * DT));
   else if (ball) {
     if (hold && p.g) { p.gr = -p.gr; p.vy = p.gr * BALL_KICK; p.g = false; }
     p.vy = Math.max(-BALL_MAX, Math.min(BALL_MAX, p.vy + BALL_GRAVITY * p.gr * DT));
-  } else { if (hold && p.g) { p.vy = JUMP_V; p.g = false; } p.vy += GRAVITY * DT; }
+  } else { if (hold && p.g) { p.vy = JUMP_V * p.gr; p.g = false; } p.vy += GRAVITY * p.gr * DT; }
   p.y += p.vy * DT; p.g = false;
   if (p.y + CUBE >= GROUND_Y) { p.y = GROUND_Y - CUBE; p.vy = 0; p.g = p.gr > 0; }
-  if ((ship || ball) && p.y <= GROUND_Y - CORRIDOR) { p.y = GROUND_Y - CORRIDOR; p.vy = Math.max(0, p.vy); if (p.gr < 0) p.g = true; }
+  if ((ship || ball || p.gr < 0) && p.y <= GROUND_Y - CORRIDOR) { p.y = GROUND_Y - CORRIDOR; p.vy = Math.max(0, p.vy); if (p.gr < 0) p.g = true; }
   const outer = () => ({ x: PX, y: p.y, w: CUBE, h: CUBE }), inner = () => ({ x: PX + INNER, y: p.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER });
   for (const o0 of obs) {
     if (o0.t !== 'b' || o0.x - off > PX + 60 || o0.x + o0.w - off < PX - 20) continue;
     const o = { ...o0, x: o0.x - off };
     if (!ov(outer(), o)) continue;
     if (p.vy >= 0 && p.y + CUBE - o.y <= INNER) { p.y = o.y - CUBE; p.vy = 0; p.g = p.gr > 0; }
-    else if ((ship || ball) && p.vy <= 0 && o.y + o.h - p.y <= INNER) { p.y = o.y + o.h; p.vy = 0; if (p.gr < 0) p.g = true; }
+    else if ((ship || ball || p.gr < 0) && p.vy <= 0 && o.y + o.h - p.y <= INNER) { p.y = o.y + o.h; p.vy = 0; if (p.gr < 0) p.g = true; }
     else if (ov(inner(), o)) return null;
   }
   for (const o0 of obs) {
@@ -79,17 +83,19 @@ function analyse(lv, K) {
   // How far the world has scrolled after each physics step. This doesn't depend on the player,
   // so it's worked out once: move by the current speed, then any portal the cube's centre has
   // passed sets the speed for the next step (same order as the game's update()).
-  // Mode portals (ship / ball / cube) work the same way, so modes[s] is the mode for step s.
-  const offs = [0], modes = ['cube'];
+  // Mode portals (ship / ball / cube) work the same way, so modes[s] is the mode for step s,
+  // and gravs[s] is the gravity a gravity portal sets at step s (if any).
+  const offs = [0], modes = ['cube'], gravs = [0];
   let speed = lv.speed, mode = 'cube', pi = 0, endStep = 0;
   while (offs[offs.length - 1] < finishX - PX) {
     const off = offs[offs.length - 1] + speed * DT;
     offs.push(off);
+    let gset = 0;
     while (pi < portals.length && portals[pi].x + 20 - off <= PX + CUBE / 2) {
       const pt = portals[pi++];
-      if (pt.speed) speed = pt.speed; else mode = pt.mode;
+      if (pt.speed) speed = pt.speed; else if (pt.grav) gset = pt.grav; else mode = pt.mode;
     }
-    modes.push(mode);
+    modes.push(mode); gravs.push(gset);
   }
   endStep = offs.length - 1;
   // the few obstacles near the cube at each step (so a step doesn't scan the whole level)
@@ -101,6 +107,7 @@ function analyse(lv, K) {
       const s = n * K + k;
       if (s >= endStep) return { p, done: true };
       if (modes[s + 1] !== modes[s]) p = { ...p, gr: 1 }; // going through a mode portal resets gravity
+      if (gravs[s + 1] && gravs[s + 1] !== p.gr) p = { ...p, gr: gravs[s + 1], g: false };
       p = phys(p, offs[s + 1], hold, near[s + 1], modes[s + 1]);
       if (!p) return null;
     }
@@ -109,7 +116,7 @@ function analyse(lv, K) {
   // Sweep forward one screen frame at a time, keeping every distinct state the cube/ship can be in.
   // Ship states are grouped into 1px x 20px/s buckets (one real, exactly simulated state is kept
   // per bucket), so a "possible" answer is always a real run; grouping only keeps the search small.
-  const key = (p, ship) => ship ? Math.round(p.y) + ':' + Math.round(p.vy / 20) + ':' + p.g
+  const key = (p, ship) => ship ? Math.round(p.y) + ':' + Math.round(p.vy / 20) + ':' + p.g + ':' + p.gr
                                 : p.y.toFixed(2) + ':' + p.vy.toFixed(1) + ':' + p.g + ':' + p.gr;
   let front = [{ y: GROUND_Y - CUBE, vy: 0, g: true, gr: 1 }], n = 0;
   while (front.length) {
