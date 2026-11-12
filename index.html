@@ -58,6 +58,14 @@
   }
   .screen [hidden] { display: none; }
 
+  /* Title screen */
+  #titleScreen { padding-bottom: 26vh; } /* sit up in the sky, clear of the floor and the hopping cube */
+  .screen h1.title { font-size: clamp(52px, 12vw, 104px); }
+  .screen .play { font-size: 30px; padding: 18px 64px; }
+  .screen .menu-head { position: relative; width: min(92vw, 780px); display: flex; justify-content: center; align-items: center; }
+  .screen .menu-head h2 { font-size: clamp(26px, 5vw, 40px); }
+  .screen .back { position: absolute; left: 0; font-size: 15px; padding: 8px 16px; }
+
   /* Level select */
   .screen .toggle {
     font-size: 15px; font-weight: 700; padding: 8px 18px;
@@ -102,6 +110,8 @@
   /* narrow screens (portrait phones): smaller level cards */
   @media (max-width: 520px) {
     .screen h1 { font-size: 44px; }
+    .screen .menu-head h2 { font-size: 22px; padding-left: 60px; }
+    .screen .back { padding: 6px 12px; font-size: 13px; }
     .screen .level { padding: 8px 10px; column-gap: 8px; }
     .level .face { width: 32px; height: 32px; }
     .level .lv-name { font-size: 15px; }
@@ -115,6 +125,9 @@
     .screen .level { padding: 8px 12px; gap: 4px; }
     .screen h1 { font-size: 30px; }
     .screen .toggle { padding: 4px 14px; font-size: 13px; }
+    .screen .menu-head h2 { font-size: 22px; }
+    .screen .back { padding: 4px 12px; font-size: 13px; }
+    .screen h1.title { font-size: 56px; }
     .screen .level { padding: 5px 10px; row-gap: 2px; }
     .level .lv-name { font-size: 14px; }
     .level .lv-meta { font-size: 11px; }
@@ -126,8 +139,17 @@
 <body>
 <canvas id="game"></canvas>
 
+<div id="titleScreen" class="screen">
+  <h1 class="title">CUBE JUMP</h1>
+  <button id="playBtn" class="big play" type="button" tabindex="-1">▶ PLAY</button>
+  <p id="titleHint" class="hint"></p>
+</div>
+
 <div id="menuScreen" class="screen">
-  <h1>CUBE JUMP</h1>
+  <div class="menu-head">
+    <button id="backBtn" class="ghost back" type="button" tabindex="-1">‹ Back</button>
+    <h2>SELECT LEVEL</h2>
+  </div>
   <button id="practiceToggle" class="toggle" type="button" tabindex="-1">Practice mode: Off</button>
   <div id="levelList"></div>
   <p id="menuHint" class="hint"></p>
@@ -179,12 +201,13 @@
   const hitboxBtn = document.getElementById('hitboxBtn');
   const pauseBtn = document.getElementById('pauseBtn');
   const $ = id => document.getElementById(id);
-  const screens = { menu: $('menuScreen'), paused: $('pauseScreen'), dead: $('crashScreen'), complete: $('completeScreen') };
+  const screens = { title: $('titleScreen'), menu: $('menuScreen'), paused: $('pauseScreen'), dead: $('crashScreen'), complete: $('completeScreen') };
   const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
+  $('titleHint').textContent = isTouch ? '' : 'Space or Enter to play';
   $('menuHint').textContent = isTouch
-    ? 'Pick a level · tap to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · yellow portals turn you upside down, blue ones turn you back · the wave: hold to fly up, let go to dive · UFO: tap to flap · spider: tap to teleport · swing: tap to flip · practice mode lets you place checkpoints'
-    : `Pick a level (keys 1–9, 0 and −, E for Endless) · Space, ↑ or click to jump · hold to keep jumping · in the ship, hold to fly · the ball flips gravity · yellow portals flip gravity, blue ones set it back · wave: hold to rise, let go to dive · UFO: tap to flap · spider: tap to teleport · swing: tap to flip · P pause · H hitboxes · in practice: C checkpoint, X undo`;
+    ? 'Tap to jump, hold to keep jumping · each portal tells you what to do · practice mode lets you place checkpoints'
+    : `Keys 1–9, 0, − pick a level, E for Endless, Esc goes back · Space, ↑ or click to jump · each portal tells you what to do · P pause · H hitboxes · in practice: C checkpoint, X undo`;
   $('pauseHint').textContent = isTouch ? '' : 'M or Esc for menu';
   $('crashHint').textContent = isTouch ? '' : 'M or Esc for menu';
 
@@ -265,12 +288,12 @@
       el.style.top = r.top + 'px';
       el.style.width = r.width + 'px';
       // the menu can use the whole screen (there's no gameplay on the floor); the others sit over the sky
-      el.style.height = (el === screens.menu ? r.height : GROUND_Y * viewScale) + 'px';
+      el.style.height = (el === screens.menu || el === screens.title ? r.height : GROUND_Y * viewScale) + 'px';
     }
   }
 
   // ---- State ----
-  let state = 'menu';            // menu | playing | paused | dead | complete
+  let state = 'title';           // title | menu (level select) | playing | paused | dead | complete
   let player, obstacles, particles, speed, distance, spawnIn, best, shake, groundOffset, holdJump;
   let mode = null;               // the level being played, or null for Endless
   let tapQueued = false;         // set by each new press, used up by the next physics step
@@ -736,6 +759,7 @@
     music.play(mode ? mode.id : 'endless'); // each level's song starts from the top
   }
   function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; music.stop(); }
+  function goTitle() { mode = null; reset(); state = 'title'; holdJump = false; music.stop(); }
   function nextLevel() {
     const i = LEVELS.indexOf(mode);
     startGame(i >= 0 && i < LEVELS.length - 1 ? LEVELS[i + 1] : mode);
@@ -788,6 +812,7 @@
   // Jump input. On the main menu only a level button (or Space/Enter/1–4) starts the game.
   function press(fromPointer) {
     if (state === 'paused') return; // only the Resume button (or ▶ / P) resumes
+    if (state === 'title') { if (!fromPointer) goMenu(); return; } // only the Play button (or Space/Enter) opens the levels
     if (state === 'menu') { if (!fromPointer) startGame(lastMode); return; }
     if (state === 'complete' || state === 'dead') return; // after a crash, only the Retry button restarts
     holdJump = true;
@@ -815,6 +840,7 @@
     if (e.code === 'KeyX' && !e.repeat) { removeCheckpoint(); return; }
     if (e.code === 'KeyP' && !e.repeat) { if (state === 'playing') togglePause(); return; } // P pauses; only buttons resume
     if ((e.code === 'Escape' || e.code === 'KeyM') && (state === 'paused' || state === 'dead' || state === 'complete')) { goMenu(); return; }
+    if ((e.code === 'Escape' || e.code === 'Backspace') && state === 'menu') { goTitle(); return; }
     if (state === 'menu' && /^Digit[0-9]$/.test(e.code)) { // 1–9 then 0 = level 10
       const d = Number(e.code.slice(5)), n = d === 0 ? 9 : d - 1;
       if (n < LEVELS.length) startGame(LEVELS[n]);
@@ -823,6 +849,7 @@
     if (state === 'menu' && e.code === 'Minus' && LEVELS[10]) { startGame(LEVELS[10]); return; }
     if (state === 'menu' && e.code === 'KeyE' && !practice) { startGame(null); return; }
     if (e.code === 'Enter' && !e.repeat) {
+      if (state === 'title') { goMenu(); return; }
       if (state === 'menu') { startGame(lastMode); return; }
       if (state === 'complete') { nextLevel(); return; }
     }
@@ -850,6 +877,8 @@
   onTap($('nextBtn'), nextLevel);
   onTap($('replayBtn'), () => startGame());
   onTap($('completeMenuBtn'), goMenu);
+  onTap($('playBtn'), goMenu);
+  onTap($('backBtn'), goTitle);
   onTap($('cpAddBtn'), placeCheckpoint);
   onTap($('cpRemoveBtn'), removeCheckpoint);
   if (!isTouch) { $('cpAddBtn').textContent = '◆ Checkpoint (C)'; $('cpRemoveBtn').textContent = '✕ Undo (X)'; }
@@ -1035,7 +1064,7 @@
     player.squash *= Math.exp(-dt * 12);
 
     // main menu: scroll the scenery slowly and let the cube hop along behind the menu
-    if (state === 'menu') {
+    if (state === 'menu' || state === 'title') {
       distance += 120 * dt;
       groundOffset = (groundOffset + 120 * dt) % 40;
       menuT += dt;
@@ -1863,7 +1892,7 @@
     }
 
     // big "2x SPEED" message when you go through a portal
-    if (speedFlash && state !== 'menu') {
+    if (speedFlash && state !== 'menu' && state !== 'title') {
       const a = Math.min(1, speedFlash.life * 1.5), grow = 1 + (1 - speedFlash.life) * 0.25;
       ctx.save();
       ctx.globalAlpha = a;
@@ -1882,7 +1911,7 @@
     }
 
     // HUD during a run: progress bar + % for levels, score for Endless
-    if (state !== 'menu') {
+    if (state !== 'menu' && state !== 'title') {
       ctx.shadowColor = 'rgba(0,0,0,0.6)';
       ctx.shadowBlur = 6;
       ctx.fillStyle = '#fff';
