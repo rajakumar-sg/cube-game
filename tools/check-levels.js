@@ -15,6 +15,9 @@ const SHIP_GRAVITY = num('SHIP_GRAVITY'), SHIP_LIFT = num('SHIP_LIFT'), SHIP_MAX
 const THORN_HB = num('THORN_HB'), THORN_GAP = num('THORN_GAP');
 const SLAB_H = num('SLAB_H'), SLAB_LOW = num('SLAB_LOW'), SLAB_HIGH = num('SLAB_HIGH');
 const SLOPE_SPIKE_HB = num('SLOPE_SPIKE_HB'), WAVE_SAFE = num('WAVE_SAFE'), WAVE_HB = num('WAVE_HB');
+const UFO_GRAVITY = num('UFO_GRAVITY'), UFO_JUMP = num('UFO_JUMP'), UFO_MAX = num('UFO_MAX');
+const SPIDER_MAX = num('SPIDER_MAX'), SWING_G = num('SWING_G'), SWING_MAX = num('SWING_MAX');
+const TAP_GAP = 8; // the solver taps at most once every 8 physics steps (15 taps a second), so runs stay human
 const BALL_GRAVITY = num('BALL_GRAVITY'), BALL_KICK = num('BALL_KICK'), BALL_MAX = num('BALL_MAX');
 const GROUND_Y = 420, PX = 180, DT = 1 / 120;
 
@@ -36,8 +39,8 @@ function build(map, ceil = '') {
     if (c === 'A' || c === 'B') obs.push({ t: 's', x, w: 40, h: 40, y: GROUND_Y - h - 40 });
     if (SPEED_TIERS[c]) portals.push({ x, speed: SPEED_TIERS[c] });
     if (c === 'u' || c === 'd') portals.push({ x, grav: c === 'u' ? -1 : 1 });
-    if (c === '[' || c === '(' || c === 'w' || c === ']') portals.push({ x, mode: { '[': 'ship', '(': 'ball', w: 'wave', ']': 'cube' }[c] });
-    if (c === '[' || c === '(' || c === 'w') { shipFrom = x; shipKind = c; }
+    if ('[(wopg]'.includes(c)) portals.push({ x, mode: { '[': 'ship', '(': 'ball', w: 'wave', o: 'ufo', p: 'spider', g: 'swing', ']': 'cube' }[c] });
+    if ('[(wopg'.includes(c)) { shipFrom = x; shipKind = c; }
     if (shipKind === 'w' && shipFrom !== null) { // wave tunnel floor/ceiling pieces (sloped or flat), lined with spikes
       const cc = ceil[i], k = (x - shipFrom) / 40, f0 = waveF, c0 = waveC;
       if (c === '/') waveF += 40; else if (c === '\\') waveF -= 40;
@@ -61,12 +64,28 @@ function terrainHit(b, o) {
 }
 const sbox = s => ({ x: s.x + (s.w - SPIKE_HB_W) / 2, y: s.flip ? s.y + s.h - SPIKE_HB_TOP - SPIKE_HB_H : s.y + SPIKE_HB_TOP, w: SPIKE_HB_W, h: SPIKE_HB_H });
 
-// one physics step of the game's update() in mode m ('cube' | 'ship' | 'ball'); returns null on crash.
+// one physics step of the game's update() in mode m; returns null on crash. `tap` is a fresh press
+// (used by the UFO, spider and swing); `hold` is the key being held (cube, ship, ball, wave).
 // p.gr is the gravity direction (1 = down, -1 = up), flipped by the ball or by gravity portals.
-function phys(p, off, hold, obs, m, spd) {
+function phys(p, off, hold, obs, m, spd, tap) {
   p = { ...p };
-  const ship = m === 'ship', ball = m === 'ball', wave = m === 'wave';
-  if (wave) p.vy = (hold ? -1 : 1) * spd * p.gr;
+  const ship = m === 'ship', ball = m === 'ball', wave = m === 'wave', vehicle = m !== 'cube';
+  if (m === 'ufo') {
+    if (tap) p.vy = UFO_JUMP * p.gr;
+    p.vy = Math.max(-UFO_MAX, Math.min(UFO_MAX, p.vy + UFO_GRAVITY * p.gr * DT));
+  } else if (m === 'swing') {
+    if (tap) p.gr = -p.gr;
+    p.vy = Math.max(-SWING_MAX, Math.min(SWING_MAX, p.vy + SWING_G * p.gr * DT));
+  } else if (m === 'spider') {
+    if (tap && p.g) { // teleport straight across to the nearest surface
+      const over = o => o.t === 'b' && o.x - off < PX + CUBE && o.x + o.w - off > PX;
+      let y;
+      if (p.gr > 0) { y = GROUND_Y - CORRIDOR; for (const o of obs) if (over(o) && o.y + o.h <= p.y + 0.5) y = Math.max(y, o.y + o.h); }
+      else { y = GROUND_Y - CUBE; for (const o of obs) if (over(o) && o.y >= p.y + CUBE - 0.5) y = Math.min(y, o.y - CUBE); }
+      p.y = y; p.vy = 0; p.gr = -p.gr; p.g = false;
+    }
+    p.vy = Math.max(-SPIDER_MAX, Math.min(SPIDER_MAX, p.vy + GRAVITY * p.gr * DT));
+  } else if (wave) p.vy = (hold ? -1 : 1) * spd * p.gr;
   else if (ship) p.vy = Math.max(-SHIP_MAX, Math.min(SHIP_MAX, p.vy + (hold ? -SHIP_LIFT : SHIP_GRAVITY) * p.gr * DT));
   else if (ball) {
     if (hold && p.g) { p.gr = -p.gr; p.vy = p.gr * BALL_KICK; p.g = false; }
@@ -74,7 +93,7 @@ function phys(p, off, hold, obs, m, spd) {
   } else { if (hold && p.g) { p.vy = JUMP_V * p.gr; p.g = false; } p.vy += GRAVITY * p.gr * DT; }
   p.y += p.vy * DT; p.g = false;
   if (p.y + CUBE >= GROUND_Y) { p.y = GROUND_Y - CUBE; p.vy = 0; p.g = p.gr > 0; }
-  if ((ship || ball || wave || p.gr < 0) && p.y <= GROUND_Y - CORRIDOR) { p.y = GROUND_Y - CORRIDOR; p.vy = Math.max(0, p.vy); if (p.gr < 0) p.g = true; }
+  if ((vehicle || p.gr < 0) && p.y <= GROUND_Y - CORRIDOR) { p.y = GROUND_Y - CORRIDOR; p.vy = Math.max(0, p.vy); if (p.gr < 0) p.g = true; }
   const touch = () => { const i = wave ? WAVE_HB : 0; return { x: PX + i, y: p.y + i, w: CUBE - 2 * i, h: CUBE - 2 * i }; }; // what ground spikes hit
   const outer = () => ({ x: PX, y: p.y, w: CUBE, h: CUBE }), inner = () => ({ x: PX + INNER, y: p.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER });
   for (const o0 of obs) {
@@ -83,7 +102,7 @@ function phys(p, off, hold, obs, m, spd) {
     if (!ov(outer(), o)) continue;
     if (wave) { if (ov(inner(), o)) return null; continue; }
     if (p.vy >= 0 && p.y + CUBE - o.y <= INNER) { p.y = o.y - CUBE; p.vy = 0; p.g = p.gr > 0; }
-    else if ((ship || ball || p.gr < 0) && p.vy <= 0 && o.y + o.h - p.y <= INNER) { p.y = o.y + o.h; p.vy = 0; if (p.gr < 0) p.g = true; }
+    else if ((vehicle || p.gr < 0) && p.vy <= 0 && o.y + o.h - p.y <= INNER) { p.y = o.y + o.h; p.vy = 0; if (p.gr < 0) p.g = true; }
     else if (ov(inner(), o)) return null;
   }
   for (const o0 of obs) {
@@ -131,19 +150,25 @@ function analyse(lv, K) {
       if (s >= endStep) return { p, done: true };
       if (modes[s + 1] !== modes[s]) p = { ...p, gr: 1 }; // going through a mode portal resets gravity
       if (gravs[s + 1] && gravs[s + 1] !== p.gr) p = { ...p, gr: gravs[s + 1], g: false };
-      p = phys(p, offs[s + 1], hold, near[s + 1], modes[s + 1], (offs[s + 1] - offs[s]) / DT);
+      // a tap happens on the frame's first step, if it's been long enough since the last one
+      const tapMode = modes[s + 1] === 'ufo' || modes[s + 1] === 'spider' || modes[s + 1] === 'swing';
+      const tap = tapMode && hold && k === 0 && (p.t ?? TAP_GAP) >= TAP_GAP;
+      if (tapMode && hold && k === 0 && !tap) return null; // too soon to tap again (the no-tap choice covers this frame)
+      p = phys(p, offs[s + 1], hold, near[s + 1], modes[s + 1], (offs[s + 1] - offs[s]) / DT, tap);
       if (!p) return null;
+      p.t = tap ? 1 : Math.min(TAP_GAP, (p.t ?? TAP_GAP) + 1);
     }
     return { p, done: (n + 1) * K >= endStep };
   };
   // Sweep forward one screen frame at a time, keeping every distinct state the cube/ship can be in.
   // Ship states are grouped into 1px x 20px/s buckets (one real, exactly simulated state is kept
   // per bucket), so a "possible" answer is always a real run; grouping only keeps the search small.
-  const key = (p, ship) => ship ? Math.round(p.y) + ':' + Math.round(p.vy / 20) + ':' + p.g + ':' + p.gr
-                                : p.y.toFixed(2) + ':' + p.vy.toFixed(1) + ':' + p.g + ':' + p.gr;
-  let front = [{ y: GROUND_Y - CUBE, vy: 0, g: true, gr: 1 }], n = 0;
+  const key = (p, ship) => ship ? Math.round(p.y) + ':' + Math.round(p.vy / 20) + ':' + p.g + ':' + p.gr + ':' + p.t
+                                : p.y.toFixed(2) + ':' + p.vy.toFixed(1) + ':' + p.g + ':' + p.gr + ':' + p.t;
+  let front = [{ y: GROUND_Y - CUBE, vy: 0, g: true, gr: 1, t: TAP_GAP }], n = 0;
   while (front.length) {
-    const next = new Map(), ship = modes[(n + 1) * K] === 'ship' || modes[n * K + 1] === 'ship';
+    const coarse = m => m === 'ship' || m === 'ufo' || m === 'swing'; // free-flying modes get bucketed states
+    const next = new Map(), ship = coarse(modes[(n + 1) * K]) || coarse(modes[n * K + 1]);
     for (const p of front) {
       for (const hold of [false, true]) {
         const r = frame(n, p, hold);
