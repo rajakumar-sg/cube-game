@@ -209,13 +209,14 @@
   const BALL_MAX = 900;          // fastest fall, px/s
   // Wave mode (between a WAVE portal and a CUBE portal): hold to fly diagonally up, let go to dive
   // diagonally down (45°, so it climbs exactly as fast as the level scrolls). Only the inner box counts.
-  const SLOPE_SPIKE_HB = 12;     // the spikes lining a wave tunnel's floor, ceiling and slopes reach this far out
+  const SLOPE_SPIKE_HB = 16;     // the spikes lining a wave tunnel's floor, ceiling and slopes reach this far out (as drawn)
+  const WAVE_HB = 6;             // the wave's box for ground spikes: inset this much per side (28x28, about the dart's size)
   const WAVE_SAFE = 3;           // columns of plain floor after a WAVE portal before the floor spikes start
   const SLAB_H = 20;             // floating slab thickness
   const SLAB_LOW = 70;           // height of a low slab's top above the floor (a cube fits underneath)
   const SLAB_HIGH = 140;         // height of a high slab's top
   const THORN_H = 18;            // ground spikes lining the floor of every ship section: drawn height
-  const THORN_HB = 14;           // ...and hitbox height (touching it with the inner box = crash)
+  const THORN_HB = 18;           // ...and hitbox height: the full drawn height (touching it with your body = crash)
   const THORN_GAP = 120;         // they start this far past the SHIP portal
   const START_SPEED = 360;       // px/s
   const MAX_SPEED = 720;
@@ -367,8 +368,8 @@
     },
     {
       id: 'apocalypse', name: 'Apocalypse', difficulty: 'Extreme Demon', speed: 620, hue: 0,
-      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^...u................................................d...........A.....A.....A.....A..._+++=+++=+++_......2=++=++=......_+++++_........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........s....1.2.3......x...w...........//\\\\///\\\\\\//\\\\////\\\\\\\\///\\\\\\//\\\\.........]..........^^^^^.........1.2.33^^^^^33.2.1........',
-      ceil: '..................................................^^^^......1^^^2......A.A.A......12^^21.............................................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B.....................................................................^^^^...............B.B.................^^^^^.............3...............^^^.......................................\\\\\\\\\\..//\\\\///\\\\\\//\\\\////\\\\\\\\///\\\\\\//\\\\../////',
+      map: '..........^^^^^......1^^^^^2^^^^^3^^^^^...u................................................d...........A.....A.....A.....A..._+++=+++=+++_......2=++=++=......_+++++_........1.2.33^^^^33^^^^33^^^^33......^^^^..^^^^..^^^^...[...2^^2...3.....33.....^^^^^^^^^^....3..3..3.....B.B.B....]...123.B.B.B.B......122^^^^^^22......1A1A1A1A1A1A...(....^^^^................B.B...............^^^^^.................3.............^^^..............]........s....1.2.3......x...w..........//\\\\///\\\\\\//\\\\////\\\\\\\\///\\\\\\//\\\\........]..........^^^^^.........1.2.33^^^^^33.2.1........',
+      ceil: '..................................................^^^^......1^^^2......A.A.A......12^^21.............................................................................................................................................2^^2...3.....33...^^^^^^^^^^......3..3..3.....B.B.B.....................................................................^^^^...............B.B.................^^^^^.............3...............^^^.......................................\\\\\\\\..//\\\\///\\\\\\//\\\\////\\\\\\\\///\\\\\\//\\\\..////',
     },
   ];
   // LEVELS-END
@@ -956,6 +957,12 @@
     return o.t === 'tf' ? b.y + b.h > GROUND_Y - hmax - SLOPE_SPIKE_HB
                         : b.y < GROUND_Y - CORRIDOR + hmax + SLOPE_SPIKE_HB;
   }
+  // ground spikes (ship floors, wave tunnels) kill as soon as they touch what you see: the whole
+  // 40x40 box, or for the smaller wave dart a 28x28 box
+  function spikeTouchBox() {
+    const i = player.wave ? WAVE_HB : 0;
+    return { x: player.x + i, y: player.y + i, w: CUBE - 2 * i, h: CUBE - 2 * i };
+  }
   function outerBox() { return { x: player.x, y: player.y, w: CUBE, h: CUBE }; }
   function innerBox() { return { x: player.x + INNER, y: player.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER }; }
   function rectsOverlap(a, b) {
@@ -1104,8 +1111,8 @@
     const inner = innerBox();
     for (const o of obstacles) {
       if (o.t === 's' && rectsOverlap(inner, spikeBox(o))) return die();
-      if (o.t === 'g' && rectsOverlap(inner, thornBox(o))) return die();
-      if ((o.t === 'tf' || o.t === 'tc') && terrainHit(inner, o)) return die();
+      if (o.t === 'g' && rectsOverlap(spikeTouchBox(), thornBox(o))) return die();
+      if ((o.t === 'tf' || o.t === 'tc') && terrainHit(spikeTouchBox(), o)) return die();
     }
 
     // landing: squash and kick up a little dust
@@ -1794,6 +1801,15 @@
         ctx.strokeRect(b.x, b.y, b.w, b.h);
       }
     }
+    // wave tunnel: the deadly band along each spiked surface
+    ctx.fillStyle = 'rgba(255,77,77,0.35)';
+    for (const o of obstacles) {
+      if ((o.t !== 'tf' && o.t !== 'tc') || (o.safe && !o.h0 && !o.h1)) continue;
+      const f = o.t === 'tf', y = h => f ? GROUND_Y - h : GROUND_Y - CORRIDOR + h, d = f ? -SLOPE_SPIKE_HB : SLOPE_SPIKE_HB;
+      ctx.beginPath(); ctx.moveTo(o.x, y(o.h0)); ctx.lineTo(o.x + o.w, y(o.h1)); ctx.lineTo(o.x + o.w, y(o.h1) + d); ctx.lineTo(o.x, y(o.h0) + d); ctx.closePath(); ctx.fill();
+    }
+    // the box ground spikes check (orange dashes) when it differs from the outer box
+    if (player.wave) { const sb = spikeTouchBox(); ctx.setLineDash([4, 3]); ctx.strokeStyle = '#ffa53c'; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h); ctx.setLineDash([]); }
     // cube: outer box (blue outline) and inner box (filled)
     const ob = outerBox(), ib = innerBox();
     ctx.strokeStyle = '#4dc3ff';

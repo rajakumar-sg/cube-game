@@ -14,7 +14,7 @@ const SPIKE_HB_W = num('SPIKE_HB_W'), SPIKE_HB_H = num('SPIKE_HB_H'), SPIKE_HB_T
 const SHIP_GRAVITY = num('SHIP_GRAVITY'), SHIP_LIFT = num('SHIP_LIFT'), SHIP_MAX = num('SHIP_MAX'), CORRIDOR = num('CORRIDOR');
 const THORN_HB = num('THORN_HB'), THORN_GAP = num('THORN_GAP');
 const SLAB_H = num('SLAB_H'), SLAB_LOW = num('SLAB_LOW'), SLAB_HIGH = num('SLAB_HIGH');
-const SLOPE_SPIKE_HB = num('SLOPE_SPIKE_HB'), WAVE_SAFE = num('WAVE_SAFE');
+const SLOPE_SPIKE_HB = num('SLOPE_SPIKE_HB'), WAVE_SAFE = num('WAVE_SAFE'), WAVE_HB = num('WAVE_HB');
 const BALL_GRAVITY = num('BALL_GRAVITY'), BALL_KICK = num('BALL_KICK'), BALL_MAX = num('BALL_MAX');
 const GROUND_Y = 420, PX = 180, DT = 1 / 120;
 
@@ -75,6 +75,7 @@ function phys(p, off, hold, obs, m, spd) {
   p.y += p.vy * DT; p.g = false;
   if (p.y + CUBE >= GROUND_Y) { p.y = GROUND_Y - CUBE; p.vy = 0; p.g = p.gr > 0; }
   if ((ship || ball || wave || p.gr < 0) && p.y <= GROUND_Y - CORRIDOR) { p.y = GROUND_Y - CORRIDOR; p.vy = Math.max(0, p.vy); if (p.gr < 0) p.g = true; }
+  const touch = () => { const i = wave ? WAVE_HB : 0; return { x: PX + i, y: p.y + i, w: CUBE - 2 * i, h: CUBE - 2 * i }; }; // what ground spikes hit
   const outer = () => ({ x: PX, y: p.y, w: CUBE, h: CUBE }), inner = () => ({ x: PX + INNER, y: p.y + INNER, w: CUBE - 2 * INNER, h: CUBE - 2 * INNER });
   for (const o0 of obs) {
     if (o0.t !== 'b' || o0.x - off > PX + 60 || o0.x + o0.w - off < PX - 20) continue;
@@ -91,11 +92,11 @@ function phys(p, off, hold, obs, m, spd) {
   }
   for (const o0 of obs) {
     if (o0.t !== 'g' || o0.x - off > PX + 60 || o0.x + o0.w - off < PX - 20) continue;
-    if (ov(inner(), { ...o0, x: o0.x - off })) return null;
+    if (ov(touch(), { ...o0, x: o0.x - off })) return null;
   }
   for (const o0 of obs) {
     if ((o0.t !== 'tf' && o0.t !== 'tc') || o0.x - off > PX + 60 || o0.x + o0.w - off < PX - 20) continue;
-    if (terrainHit(inner(), { ...o0, x: o0.x - off })) return null;
+    if (terrainHit(touch(), { ...o0, x: o0.x - off })) return null;
   }
   return p;
 }
