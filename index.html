@@ -261,6 +261,7 @@
 
   function resize() {
     const cssW = window.innerWidth, cssH = window.innerHeight;
+    if (!cssW || !cssH) return; // hidden / not laid out yet (0x0): keep the last good size
     const aspect = cssW / cssH;
     W = Math.min(1280, Math.max(640, 540 * aspect));
     H = Math.max(540, W / aspect);
@@ -486,6 +487,12 @@
       bass: 'R R O R R R O R R R O R F F O O',
       kick: 'k.k.k.k.k.k.k.k.', snare: '....s.......s.ss', hat: 'hhhhhhhhhhhhhhhh',
     },
+    'menu': {                           // calm and dreamy, for the title and level select
+      bpm: 92, chords: ['Am', 'F', 'C', 'G'], arp: true,
+      lead: 'A4 - - - C5 - E5 - D5 - C5 - B4 - - - | A4 - - - C5 - F5 - E5 - C5 - A4 - - - | G4 - - - C5 - E5 - G5 - E5 - D5 - - - | B4 - - - D5 - G5 - F5 - D5 - B4 - - .',
+      bass: 'R . . . . . . . F . . . O . . .',
+      kick: 'k.......k.......', snare: '........s.......', hat: '..h...h...h...h.',
+    },
     'endless': {                        // groovy
       bpm: 136, chords: ['Dm', 'G', 'Dm', 'C'], arp: true,
       lead: 'D5 . F5 . A5 . . G5 . F5 . D5 . . C5 . | B4 . D5 . G5 . . F5 . E5 . D5 . . B4 . | A4 . D5 . F5 . A5 . C6 . A5 . F5 . D5 . | E5 . G5 . C6 - - . B5 . G5 . E5 . C5 .',
@@ -496,7 +503,7 @@
 
   const music = (() => {
     let ac = null, master = null, noise = null;
-    let song = null, songOut = null, timer = null, step = 0, nextTime = 0, paused = false, kickTimes = [];
+    let songKey = null, song = null, songOut = null, timer = null, step = 0, nextTime = 0, paused = false, kickTimes = [];
     let muted = localStorageGet('cubeJumpMuted') === '1';
 
     const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -587,7 +594,7 @@
     }
 
     function stop() {
-      clearInterval(timer); timer = null; song = null;
+      clearInterval(timer); timer = null; song = null; songKey = null;
       if (!ac) return;
       if (songOut) {
         const g = songOut, now = ac.currentTime;
@@ -601,7 +608,9 @@
     }
     function play(key) {
       if (!SONGS[key] || !ensure()) return;
+      if (key === songKey && timer) return; // already playing (e.g. going between the title and the level list)
       stop();
+      songKey = key;
       song = getSong(key);
       songOut = ac.createGain();
       songOut.connect(master);
@@ -716,6 +725,7 @@
   }
   resize();
   reset();
+  music.play('menu'); // the menu song (it starts sounding on the first tap, click or key — browsers require one)
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 
@@ -758,8 +768,8 @@
     checkpoints = []; attempt = 1;
     music.play(mode ? mode.id : 'endless'); // each level's song starts from the top
   }
-  function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; music.stop(); }
-  function goTitle() { mode = null; reset(); state = 'title'; holdJump = false; music.stop(); }
+  function goMenu() { mode = null; reset(); state = 'menu'; holdJump = false; music.play('menu'); }
+  function goTitle() { mode = null; reset(); state = 'title'; holdJump = false; music.play('menu'); }
   function nextLevel() {
     const i = LEVELS.indexOf(mode);
     startGame(i >= 0 && i < LEVELS.length - 1 ? LEVELS[i + 1] : mode);
@@ -1989,14 +1999,14 @@
   const STEP = 1 / 120;
   let last = performance.now(), acc = 0;
   function frame(now) {
+    requestAnimationFrame(frame); // ask for the next frame first, so one bad frame can't stop the game
     acc += Math.min(0.1, (now - last) / 1000);
     last = now;
     let steps = 0;
     while (acc >= STEP && steps < 12) { update(STEP); acc -= STEP; steps++; }
     if (steps === 12) acc = 0; // way behind (e.g. tab was asleep): don't try to catch up
-    draw();
     syncUI();
-    requestAnimationFrame(frame);
+    draw();
   }
   requestAnimationFrame(frame);
 })();
